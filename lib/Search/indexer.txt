@@ -1,0 +1,223 @@
+NAME
+    Search::Indexer - full-text indexer
+
+SYNOPSIS
+      use Search::Indexer;
+      my $ix = new Search::Indexer(dir => $dir, writeMode => 1);
+      foreach my $docId (keys %docs) {
+        $ix->add($docId, $docs{$docId});
+      }
+
+      my $result = $ix->search('+word -excludedWord +"exact phrase");
+      my @docIds = keys @{$result->{scores}};
+      my $killedWords = join ", ", @{$result->{killedWords}};
+      print scalar(@docIds), " documents found\n", ;
+      print "words $killedWords were ignored during the search\n" if $killedWords;
+      foreach my $docId (@docIds) {
+        my $score = $result->{scores}{$docId};
+        my $excerpts = join "\n", $ix->excerpts($docs{$docId}, $result->{regex});
+        print "DOCUMENT $docId, score $score:\n$excerpts\n\n";
+      }
+
+      my $result2 = $ix->search('word1 AND (word2 OR word3) AND NOT word4');
+
+      $ix->remove($someDocId);
+
+DESCRIPTION
+    This module provides support for indexing a collection of documents, for
+    searching the collection, and displaying the sorted results, together
+    with contextual excerpts of the original document.
+
+  Documents
+    As far as this module is concerned, a *document* is just a buffer of
+    plain text, together with a unique identifying number. The caller is
+    responsible for supplying unique numbers, and for converting the
+    original source (HTML, PDF, whatever) into plain text. Documents could
+    also contain more information (other fields like date, author, Dublin
+    Core, etc.), but this must be handled externally, in a database or any
+    other store. A candidate for storing metadata about documents could be
+    File::Tabular, which uses the same query parser.
+
+  Search syntax
+    Searching requests may include plain terms, "exact phrases", '+' or '-'
+    prefixes, boolean operators and parentheses. See Search::QueryParser for
+    details.
+
+  Index files
+    The indexer uses three files in BerkeleyDB format : a) a mapping from
+    words to wordIds; b) a mapping from wordIds to lists of documents ; c) a
+    mapping from pairs (docId, wordId) to lists of positions within the
+    document. This third file holds detailed information and therefore is
+    quite big ; but it allows us to quickly retrieve "exact phrases"
+    (sequences of adjacent words) in the document.
+
+  Indexing steps
+    Indexing of a document buffer goes through the following steps :
+
+    *   terms are extracted, according to the *wregex* regular expression
+
+    *   extracted terms are normalized or filtered out by the *wfilter*
+        callback function. This function can for example remove accented
+        characters, perform lemmatization, suppress irrelevant terms (such
+        as numbers), etc.
+
+    *   normalized terms are eliminated if they belong to the *stopwords*
+        list (list of common words to exclude from the index).
+
+    *   remaining terms are stored, together with the positions where they
+        occur in the document.
+
+  Limits
+    All ids are stored as unsigned 32-bit integers; therefore there is a
+    limit of 4294967295 to the number of documents or to the number of
+    different words.
+
+  Related modules
+    A short comparison with other CPAN indexing modules is given in the "SEE
+    ALSO" section.
+
+    This module depends on Search::QueryParser for analyzing requests and on
+    BerkeleyDB for storing the indexes.
+
+    This module was designed together with File::Tabular.
+
+METHODS
+    "new(arg1 => expr1, ...)"
+        Creates an indexer (either for a new index, or for accessing an
+        existing index). Parameters are :
+
+        dir Directory for index files. and possibly for the stopwords file.
+            Default is current directory
+
+        writeMode
+            Give a true value if you intend to write into the index.
+
+        wregex
+            Regex for matching a word ("qr/\w+/" by default). Will affect
+            both add and search method. This regex should not contain any
+            capturing parentheses.
+
+        wfilter
+            Ref to a callback sub that may normalize or eliminate a word.
+            Will affect both add and search method. The default wfilter
+            translates words in lower case and translates latin1
+            (iso-8859-1) accented characters into plain characters.
+
+        stopwords
+            List of words that will be marked into the index as "words to
+            exclude". This should usually occur when creating a new index ;
+            but nothing prevents you to add other stopwords later. Since
+            stopwords are stored in the index, they need not be specified
+            When opening an index for searches or updates.
+
+            The list may be supplied either as a ref to an array of scalars,
+            or as a the name of a file containing the stopwords (full
+            pathname or filename relative to *dir*).
+
+        fieldname
+            Will only affect the search method. Search queries are passed to
+            a general parser (see Search::QueryParser). Then, before being
+            applied to the present indexer module, queries are pruned of
+            irrelevant items. Query items are considered relevant if they
+            have no associated field name, or if the associated field name
+            is equal to this "fieldname".
+
+        Below are some additional parameters that only affect the "excerpts"
+        method.
+
+        ctxtNumChars
+            Number of characters determining the size of contextual excerpts
+            return by the "excerpts" method. A *contextual excerpt* is a
+            part of the document text, containg a matched word surrounded by
+            *ctxtNumChars* characters to the left and to the right. Default
+            is 35.
+
+        maxExcerpts
+            Maximum number of contextual excerpts to retrieve per document.
+            Default is 5.
+
+        preMatch
+            String to insert in contextual excerpts before a matched word.
+            Default is "<b>".
+
+        postMatch
+            String to insert in contextual excerpts after a matched word.
+            Default is "</b>".
+
+    "add(docId, buf)"
+        Add a new document to the index. *docId* is the unique identifier
+        for this doc (the caller is responsible for uniqueness). *buf* is a
+        scalar containing the text representation of this doc.
+
+    "remove(docId)"
+        Removes a document from the index.
+
+    "wordIds(docId)"
+        Returns a ref to an array of word Ids contained in the specified
+        document
+
+    "words(prefix)"
+        Returns a ref to an array of words found in the dictionary, starting
+        with prefix (i.e. "$ix->words("foo")" will return "foo", "food",
+        "fool", "footage", etc.).
+
+    "dump()"
+        Debugging function, prints indexed words with list of associated
+        docs.
+
+    "search(queryString, implicitPlus)"
+        Searches the index. See the "SYNOPSIS" and "DESCRIPTION" sections
+        above for short descriptions of query strings, or
+        Search::QueryParser for details. The second argument is optional ;
+        if true, all words without any prefix will implicitly take prefix
+        '+' (mandatory words).
+
+        The return value is a hash ref containing
+
+        scores
+            hash ref, where keys are docIds of matching documents, and
+            values are the corresponding computed scores.
+
+        killedWords
+            ref to an array of terms from the query string which were
+            ignored during the search (because they were filtered out or
+            were stopwords)
+
+        regex
+            ref to a regular expression corresponding to all terms in the
+            query string. This will be useful if you later want to get
+            contextual excerpts from the found documents (see the excerpts
+            method).
+
+    "excerpts(buf, regex)"
+        Searches "buf" for occurrences of "regex", extracts the occurences
+        together with some context (a number of characters to the left and
+        to the right), and highlights the occurences. See parameters
+        "ctxtNumChars", "maxExcerpts", "preMatch", "postMatch" of the "new"
+        method.
+
+TO DO
+    *   Find a proper formula for combining scores from several terms.
+        Current implementation is ridiculously simple-minded (just an
+        addition). Also study the literature to improve the scoring formula.
+
+    *   Handle concurrency through BerkeleyDB locks.
+
+    *   Maybe put all 3 index files as subDatabases in one single file.
+
+    *   Fine tuning of cachesize and other BerkeleyDB parameters.
+
+    *   Compare performances with other packages.
+
+    *   More functionalities : add NEAR operator and boost factors.
+
+SEE ALSO
+    Search::FreeText is nice and compact, but limited in functionality (no
+    +/- prefixes, no "exact phrase" search, no parentheses).
+
+    Plucene is a Perl port of the Java *Lucene* search engine. Plucene has
+    probably every feature you will ever need, but requires quite an
+    investment to install and learn (more than 60 classes, dependencies on
+    lots of external modules). I haven't done any benchmarks yet to compare
+    performance.
+
