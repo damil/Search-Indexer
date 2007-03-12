@@ -13,7 +13,7 @@
 #     ABSTRACT_FROM => q[lib/Search/Indexer.pm]
 #     AUTHOR => q[Laurent Dami <laurent.dami AT etat ge ch>]
 #     NAME => q[Search::Indexer]
-#     PREREQ_PM => { BerkeleyDB=>q[0.25], Search::QueryParser=>q[0.91] }
+#     PREREQ_PM => { BerkeleyDB=>q[0.22], Search::QueryParser=>q[0.91] }
 #     VERSION_FROM => q[lib/Search/Indexer.pm]
 
 # --- MakeMaker post_initialize section:
@@ -24,23 +24,23 @@
 # These definitions are from config.sh (via C:/Perl/lib/Config.pm)
 
 # They may have been overridden via Makefile.PL or on the command line
-AR = lib
-CC = cl
+AR = ar
+CC = gcc
 CCCDLFLAGS =  
 CCDLFLAGS =  
 DLEXT = dll
 DLSRC = dl_win32.xs
-LD = link
-LDDLFLAGS = -dll -nologo -nodefaultlib -release  -libpath:"c:\Perl\lib\CORE"  -machine:x86
-LDFLAGS = -nologo -nodefaultlib -release  -libpath:"c:\Perl\lib\CORE"  -machine:x86
+LD = gcc
+LDDLFLAGS = -mdll -L"C:\Perl\lib\CORE"
+LDFLAGS = -nologo -nodefaultlib -debug -opt:ref,icf  -libpath:"C:\Perl\lib\CORE"  -machine:x86
 LIBC = msvcrt.lib
 LIB_EXT = .lib
-OBJ_EXT = .obj
+OBJ_EXT = .o
 OSNAME = MSWin32
-OSVERS = 5.1
+OSVERS = 5.0
 RANLIB = rem
-SITELIBEXP = c:\Perl\site\lib
-SITEARCHEXP = c:\Perl\site\lib
+SITELIBEXP = C:\Perl\site\lib
+SITEARCHEXP = C:\Perl\site\lib
 SO = dll
 EXE_EXT = .exe
 FULL_AR = 
@@ -54,11 +54,11 @@ DIRFILESEP = ^\
 DFSEP = $(DIRFILESEP)
 NAME = Search::Indexer
 NAME_SYM = Search_Indexer
-VERSION = 0.71
+VERSION = 0.74
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_71
+VERSION_SYM = 0_74
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.71
+XS_VERSION = 0.74
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib\arch
@@ -67,48 +67,59 @@ INST_BIN = blib\bin
 INST_LIB = blib\lib
 INST_MAN1DIR = blib\man1
 INST_MAN3DIR = blib\man3
+INST_HTMLDIR = blib\html
 MAN1EXT = 1
 MAN3EXT = 3
 INSTALLDIRS = site
 DESTDIR = 
 PREFIX = $(SITEPREFIX)
-PERLPREFIX = c:\Perl
-SITEPREFIX = c:\Perl\site
+PERLPREFIX = C:\Perl
+SITEPREFIX = C:\Perl\site
 VENDORPREFIX = 
-INSTALLPRIVLIB = c:\Perl\lib
+INSTALLPRIVLIB = C:\Perl\lib
 DESTINSTALLPRIVLIB = $(DESTDIR)$(INSTALLPRIVLIB)
-INSTALLSITELIB = c:\Perl\site\lib
+INSTALLSITELIB = C:\Perl\site\lib
 DESTINSTALLSITELIB = $(DESTDIR)$(INSTALLSITELIB)
 INSTALLVENDORLIB = 
 DESTINSTALLVENDORLIB = $(DESTDIR)$(INSTALLVENDORLIB)
-INSTALLARCHLIB = c:\Perl\lib
+INSTALLARCHLIB = C:\Perl\lib
 DESTINSTALLARCHLIB = $(DESTDIR)$(INSTALLARCHLIB)
-INSTALLSITEARCH = c:\Perl\site\lib
+INSTALLSITEARCH = C:\Perl\site\lib
 DESTINSTALLSITEARCH = $(DESTDIR)$(INSTALLSITEARCH)
 INSTALLVENDORARCH = 
 DESTINSTALLVENDORARCH = $(DESTDIR)$(INSTALLVENDORARCH)
-INSTALLBIN = c:\Perl\bin
+INSTALLBIN = C:\Perl\bin
 DESTINSTALLBIN = $(DESTDIR)$(INSTALLBIN)
-INSTALLSITEBIN = c:\Perl\bin
+INSTALLSITEBIN = C:\Perl\bin
 DESTINSTALLSITEBIN = $(DESTDIR)$(INSTALLSITEBIN)
 INSTALLVENDORBIN = 
 DESTINSTALLVENDORBIN = $(DESTDIR)$(INSTALLVENDORBIN)
-INSTALLSCRIPT = c:\Perl\bin
+INSTALLSCRIPT = C:\Perl\bin
 DESTINSTALLSCRIPT = $(DESTDIR)$(INSTALLSCRIPT)
-INSTALLMAN1DIR = c:\Perl\man\man1
+INSTALLSITESCRIPT = $(INSTALLSCRIPT)
+DESTINSTALLSITESCRIPT = $(DESTDIR)$(INSTALLSITESCRIPT)
+INSTALLVENDORSCRIPT = 
+DESTINSTALLVENDORSCRIPT = $(DESTDIR)$(INSTALLVENDORSCRIPT)
+INSTALLMAN1DIR = C:\Perl\man\man1
 DESTINSTALLMAN1DIR = $(DESTDIR)$(INSTALLMAN1DIR)
 INSTALLSITEMAN1DIR = $(INSTALLMAN1DIR)
 DESTINSTALLSITEMAN1DIR = $(DESTDIR)$(INSTALLSITEMAN1DIR)
 INSTALLVENDORMAN1DIR = 
 DESTINSTALLVENDORMAN1DIR = $(DESTDIR)$(INSTALLVENDORMAN1DIR)
-INSTALLMAN3DIR = c:\Perl\man\man3
+INSTALLMAN3DIR = C:\Perl\man\man3
 DESTINSTALLMAN3DIR = $(DESTDIR)$(INSTALLMAN3DIR)
 INSTALLSITEMAN3DIR = $(INSTALLMAN3DIR)
 DESTINSTALLSITEMAN3DIR = $(DESTDIR)$(INSTALLSITEMAN3DIR)
 INSTALLVENDORMAN3DIR = 
 DESTINSTALLVENDORMAN3DIR = $(DESTDIR)$(INSTALLVENDORMAN3DIR)
-PERL_LIB = c:\Perl\lib
-PERL_ARCHLIB = c:\Perl\lib
+INSTALLHTMLDIR = C:\Perl\html
+DESTINSTALLHTMLDIR = $(DESTDIR)$(INSTALLHTMLDIR)
+INSTALLSITEHTMLDIR = C:\Perl\html
+DESTINSTALLSITEHTMLDIR = $(DESTDIR)$(INSTALLSITEHTMLDIR)
+INSTALLVENDORHTMLDIR = C:\Perl\html
+DESTINSTALLVENDORHTMLDIR = $(DESTDIR)$(INSTALLVENDORHTMLDIR)
+PERL_LIB = C:\Perl\lib
+PERL_ARCHLIB = C:\Perl\lib
 LIBPERL_A = libperl.lib
 FIRST_MAKEFILE = Makefile
 MAKEFILE_OLD = Makefile.old
@@ -174,7 +185,8 @@ PERL_ARCHIVE       = $(PERL_INC)\perl58.lib
 PERL_ARCHIVE_AFTER = 
 
 
-TO_INST_PM = lib/Search/Indexer.pm \
+TO_INST_PM = BenchmarkingIndexer.pm \
+	lib/Search/Indexer.pm \
 	lib/Search/Indexer.pm.bfilter \
 	lib/Search/indexer.txt
 
@@ -182,6 +194,8 @@ PM_TO_BLIB = lib/Search/indexer.txt \
 	blib\lib\Search\indexer.txt \
 	lib/Search/Indexer.pm \
 	blib\lib\Search\Indexer.pm \
+	BenchmarkingIndexer.pm \
+	$(INST_LIB)\Search\BenchmarkingIndexer.pm \
 	lib/Search/Indexer.pm.bfilter \
 	blib\lib\Search\Indexer.pm.bfilter
 
@@ -248,7 +262,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Search-Indexer
-DISTVNAME = Search-Indexer-0.71
+DISTVNAME = Search-Indexer-0.74
 
 
 # --- MakeMaker macro section:
@@ -289,7 +303,7 @@ PASTHRU = -nologo
 
 
 # --- MakeMaker top_targets section:
-all :: pure_all
+all :: pure_all htmlifypods
 	$(NOECHO) $(NOOP)
 
 
@@ -409,6 +423,18 @@ manifypods : pure_all  \
 
 
 
+# --- MakeMaker htmlifypods section:
+
+POD2HTML_EXE = $(PERLRUN) "-MActivePerl::DocTools" -e "UpdateHTML_blib(installdirs => "$(INSTALLDIRS)")"
+POD2HTML = $(POD2HTML_EXE)
+
+
+htmlifypods :  \
+	lib/Search/Indexer.pm
+	$(NOECHO) $(POD2HTML)
+
+
+
 # --- MakeMaker processPL section:
 
 
@@ -447,7 +473,8 @@ clean :: clean_subdirs
 	  perl.exe so_locations \
 	  $(BASEEXT).exp 
 	- $(RM_RF) \
-	  *.pdb blib 
+	  dll.exp dll.base \
+	  blib 
 	- $(MV) $(FIRST_MAKEFILE) $(MAKEFILE_OLD) $(DEV_NULL)
 
 
@@ -471,11 +498,11 @@ metafile : create_distdir
 	$(NOECHO) $(ECHO) "# http://module-build.sourceforge.net/META-spec.html" > META_new.yml
 	$(NOECHO) $(ECHO) "#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#" >> META_new.yml
 	$(NOECHO) $(ECHO) "name:         Search-Indexer" >> META_new.yml
-	$(NOECHO) $(ECHO) "version:      0.71" >> META_new.yml
+	$(NOECHO) $(ECHO) "version:      0.74" >> META_new.yml
 	$(NOECHO) $(ECHO) "version_from: lib/Search/Indexer.pm" >> META_new.yml
 	$(NOECHO) $(ECHO) "installdirs:  site" >> META_new.yml
 	$(NOECHO) $(ECHO) "requires:" >> META_new.yml
-	$(NOECHO) $(ECHO) "    BerkeleyDB:                    0.25" >> META_new.yml
+	$(NOECHO) $(ECHO) "    BerkeleyDB:                    0.22" >> META_new.yml
 	$(NOECHO) $(ECHO) "    Search::QueryParser:           0.91" >> META_new.yml
 	$(NOECHO) $(ECHO) "" >> META_new.yml
 	$(NOECHO) $(ECHO) "distribution_type: module" >> META_new.yml
@@ -598,7 +625,7 @@ distsignature : create_distdir
 
 # --- MakeMaker install section:
 
-install :: all pure_install doc_install
+install :: all pure_install doc_install doc_update
 	$(NOECHO) $(NOOP)
 
 install_perl :: all pure_perl_install doc_perl_install
@@ -616,6 +643,9 @@ pure_install :: pure_$(INSTALLDIRS)_install
 doc_install :: doc_$(INSTALLDIRS)_install
 	$(NOECHO) $(NOOP)
 
+doc_update ::
+	$(NOECHO) $(PERLRUN) "-MActivePerl::DocTools" -e ActivePerl::DocTools::WriteTOC
+
 pure__install : pure_site_install
 	$(NOECHO) $(ECHO) INSTALLDIRS not defined, defaulting to INSTALLDIRS=site
 
@@ -631,7 +661,8 @@ pure_perl_install ::
 		$(INST_BIN) $(DESTINSTALLBIN) \
 		$(INST_SCRIPT) $(DESTINSTALLSCRIPT) \
 		$(INST_MAN1DIR) $(DESTINSTALLMAN1DIR) \
-		$(INST_MAN3DIR) $(DESTINSTALLMAN3DIR)
+		$(INST_MAN3DIR) $(DESTINSTALLMAN3DIR) \
+		$(INST_HTMLDIR) $(DESTINSTALLHTMLDIR)
 	$(NOECHO) $(WARN_IF_OLD_PACKLIST) \
 		$(SITEARCHEXP)\auto\$(FULLEXT)
 
@@ -643,9 +674,10 @@ pure_site_install ::
 		$(INST_LIB) $(DESTINSTALLSITELIB) \
 		$(INST_ARCHLIB) $(DESTINSTALLSITEARCH) \
 		$(INST_BIN) $(DESTINSTALLSITEBIN) \
-		$(INST_SCRIPT) $(DESTINSTALLSCRIPT) \
+		$(INST_SCRIPT) $(DESTINSTALLSITESCRIPT) \
 		$(INST_MAN1DIR) $(DESTINSTALLSITEMAN1DIR) \
-		$(INST_MAN3DIR) $(DESTINSTALLSITEMAN3DIR)
+		$(INST_MAN3DIR) $(DESTINSTALLSITEMAN3DIR) \
+		$(INST_HTMLDIR) $(DESTINSTALLSITEHTMLDIR)
 	$(NOECHO) $(WARN_IF_OLD_PACKLIST) \
 		$(PERL_ARCHLIB)\auto\$(FULLEXT)
 
@@ -656,9 +688,10 @@ pure_vendor_install ::
 		$(INST_LIB) $(DESTINSTALLVENDORLIB) \
 		$(INST_ARCHLIB) $(DESTINSTALLVENDORARCH) \
 		$(INST_BIN) $(DESTINSTALLVENDORBIN) \
-		$(INST_SCRIPT) $(DESTINSTALLSCRIPT) \
+		$(INST_SCRIPT) $(DESTINSTALLVENDORSCRIPT) \
 		$(INST_MAN1DIR) $(DESTINSTALLVENDORMAN1DIR) \
-		$(INST_MAN3DIR) $(DESTINSTALLVENDORMAN3DIR)
+		$(INST_MAN3DIR) $(DESTINSTALLVENDORMAN3DIR) \
+		$(INST_HTMLDIR) $(DESTINSTALLVENDORHTMLDIR)
 
 doc_perl_install ::
 	$(NOECHO) $(ECHO) Appending installation info to $(DESTINSTALLARCHLIB)/perllocal.pod
@@ -694,7 +727,7 @@ doc_vendor_install ::
 		>> $(DESTINSTALLARCHLIB)\perllocal.pod
 
 
-uninstall :: uninstall_from_$(INSTALLDIRS)dirs
+uninstall :: uninstall_from_$(INSTALLDIRS)dirs doc_update
 	$(NOECHO) $(NOOP)
 
 uninstall_from_perldirs ::
@@ -776,15 +809,15 @@ testdb_static :: testdb_dynamic
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd:
-	$(NOECHO) $(ECHO) "<SOFTPKG NAME=\"$(DISTNAME)\" VERSION=\"0,71,0,0\">" > $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) "<SOFTPKG NAME=\"$(DISTNAME)\" VERSION=\"0,74,0,0\">" > $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <TITLE>$(DISTNAME)</TITLE>" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <ABSTRACT>full-text indexer</ABSTRACT>" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <AUTHOR>Laurent Dami &lt;laurent.dami AT etat ge ch&gt;</AUTHOR>" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <IMPLEMENTATION>" >> $(DISTNAME).ppd
-	$(NOECHO) $(ECHO) "        <DEPENDENCY NAME=\"BerkeleyDB\" VERSION=\"0,25,0,0\" />" >> $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) "        <DEPENDENCY NAME=\"BerkeleyDB\" VERSION=\"0,22,0,0\" />" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "        <DEPENDENCY NAME=\"Search-QueryParser\" VERSION=\"0,91,0,0\" />" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "        <OS NAME=\"$(OSNAME)\" />" >> $(DISTNAME).ppd
-	$(NOECHO) $(ECHO) "        <ARCHITECTURE NAME=\"MSWin32-x86-multi-thread\" />" >> $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) "        <ARCHITECTURE NAME=\"MSWin32-x86-multi-thread-5.8\" />" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "        <CODEBASE HREF=\"\" />" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    </IMPLEMENTATION>" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "</SOFTPKG>" >> $(DISTNAME).ppd
@@ -796,6 +829,7 @@ pm_to_blib : $(TO_INST_PM)
 	$(NOECHO) $(ABSPERLRUN) -MExtUtils::Install -e "pm_to_blib({@ARGV}, '$(INST_LIB)\auto', '$(PM_FILTER)')" \
 	  lib/Search/indexer.txt blib\lib\Search\indexer.txt \
 	  lib/Search/Indexer.pm blib\lib\Search\Indexer.pm \
+	  BenchmarkingIndexer.pm $(INST_LIB)\Search\BenchmarkingIndexer.pm \
 	  lib/Search/Indexer.pm.bfilter blib\lib\Search\Indexer.pm.bfilter 
 	$(NOECHO) $(TOUCH) pm_to_blib
 
