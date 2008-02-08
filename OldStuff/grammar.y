@@ -1,5 +1,0 @@
-expr : term 
-     | '+' expr 
-     | '(' expr ')'
-  ;
-
