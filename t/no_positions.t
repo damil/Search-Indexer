@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 3 ;
+use Test::More tests => 5 ;
 
 #use locale;
 # (just for these tests, don't use locale so that the results are not
@@ -167,4 +167,17 @@ foreach my $s (keys %$tsts) {
 }
 
 
-unlink foreach (<*.bdb>);	# remove index databases
+
+# before removing a doc : make sure the result is there
+my $r = $i->search("contemple");
+is(scalar(keys %{$r->{scores}}), 1,  "before remove");
+
+# removing a doc
+$i->remove(17, $docs->{17});
+$r = $i->search("contemple");
+is(scalar(keys %{$r->{scores}}), 0,  "after remove");
+
+
+
+# remove index databases
+unlink foreach (<*.bdb>);	

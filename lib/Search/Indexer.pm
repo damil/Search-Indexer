@@ -7,12 +7,12 @@ use Carp;
 use BerkeleyDB;
 use locale;
 use Search::QueryParser;
-
+use List::MoreUtils qw/uniq/;
 
 # TODO : experiment with bit vectors (cf vec() and pack "b*" for combining 
 #        result sets
 
-our $VERSION = "0.74";
+our $VERSION = "0.75";
 
 =head1 NAME
 
@@ -26,7 +26,7 @@ Search::Indexer - full-text indexer
     $ix->add($docId, $docs{$docId});
   }
 
-  my $result = $ix->search('+word -excludedWord +"exact phrase");
+  my $result = $ix->search('+word -excludedWord +"exact phrase"');
   my @docIds = keys @{$result->{scores}};
   my $killedWords = join ", ", @{$result->{killedWords}};
   print scalar(@docIds), " documents found\n", ;
@@ -410,17 +410,37 @@ sub add {
 }
 
 
-=item C<remove(docId)>
+=item C<remove(docId [, buf])>
 
 Removes a document from the index.
+If the index contains word positions (true by default), then
+only the C<docId> is needed; however, if the index was created
+without word positions, then the text representation
+of the document must be given as a scalar string in the second argument
+(of course this should be the same as the one that was supplied
+when calling the L</add> method).
+
 
 =cut
 
 sub remove {
   my $self = shift;
   my $docId = shift;
+  # my $buf = shift; # using $_[0] instead for efficiency reasons
 
-  my $wordIds = $self->wordIds($docId);
+  my $wordIds;
+
+  if ($self->{ixp}) { # if using word positions
+    not $_[0] or carp "remove() : unexpected 'buf' argument";
+    $wordIds= $self->wordIds($docId);
+  }
+  else {              # otherwise : recompute word ids
+    $wordIds = [grep {defined $_ and $_ > 0} 
+                map {$self->{ixw}{$_}}
+                uniq map {$self->{wfilter}->($_)} 
+                         ($_[0] =~ /$self->{wregex}/g)];
+  }
+
   return if not @$wordIds;
 
   foreach my $wordId (@$wordIds) {
@@ -886,6 +906,11 @@ Plucene has probably every feature you will ever need, but requires
 quite an investment to install and learn (more than 60 classes,
 dependencies on lots of external modules). 
 I haven't done any benchmarks yet to compare performance.
+
+L<KinoSearch> is a more recent, more sophisticated search engine,
+which looks very powerful and should be probably faster and definitely
+more scalable than C<Search::Indexer>; but also with a less compact
+API. I haven't performed any detailed comparison yet.
 
 
 =cut

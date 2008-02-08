@@ -1,5 +1,8 @@
 Revision history for Perl extension Search::Indexer.
 
+0.75 24.09.2007
+  - bug fix: remove() did not work on indexes without word positions
+
 0.74 11.03.2007
   - bug fix in checking "positions" option
 
