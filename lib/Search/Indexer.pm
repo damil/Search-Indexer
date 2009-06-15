@@ -12,7 +12,7 @@ use List::MoreUtils qw/uniq/;
 # TODO : experiment with bit vectors (cf vec() and pack "b*" for combining 
 #        result sets
 
-our $VERSION = "0.75";
+our $VERSION = "0.76";
 
 =head1 NAME
 
@@ -749,7 +749,7 @@ sub nearPositions {
 sub addToScore (\$$) { # first score arg gets "incremented" by the second arg
   my ($ptScore1, $score2) = @_;
   $$ptScore1 = 0 if not defined $$ptScore1;
-  $$ptScore1 += $score2 ; # TODO : find better formula for score combination !
+  $$ptScore1 += $score2 if $score2; # TODO : find better formula for score combination !
 }
 
 
