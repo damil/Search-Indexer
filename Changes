@@ -1,5 +1,8 @@
 Revision history for Perl extension Search::Indexer.
 
+0.76 26.06.2009
+  - suppress spurious warning in addToScore
+
 0.75 24.09.2007
   - bug fix: remove() did not work on indexes without word positions
 
