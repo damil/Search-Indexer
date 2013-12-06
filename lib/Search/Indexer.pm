@@ -27,7 +27,7 @@ Search::Indexer - full-text indexer
   }
 
   my $result = $ix->search('+word -excludedWord +"exact phrase"');
-  my @docIds = keys @{$result->{scores}};
+  my @docIds = keys %{$result->{scores}};
   my $killedWords = join ", ", @{$result->{killedWords}};
   print scalar(@docIds), " documents found\n", ;
   print "words $killedWords were ignored during the search\n" if $killedWords;
