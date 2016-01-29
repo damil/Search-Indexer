@@ -2,7 +2,8 @@ package Search::Indexer;
 
 use strict;
 use warnings; 
-# no warnings 'uninitialized'; ## CHECK IF NEEDED OR NOT
+no warnings 'uninitialized';
+
 use Carp;
 use BerkeleyDB;
 use locale;
