@@ -13,7 +13,7 @@ use List::MoreUtils qw/uniq/;
 # TODO : experiment with bit vectors (cf vec() and pack "b*" for combining 
 #        result sets
 
-our $VERSION = "0.77";
+our $VERSION = "0.78";
 
 =head1 NAME
 

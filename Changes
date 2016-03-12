@@ -1,5 +1,7 @@
 Revision history for Perl extension Search::Indexer.
 
+0.78 11.02.2016
+  - suppress spurious warnings in Indexer.pm
 
 0.77 04.05.2013
   - fix warning in dump() & identify stopwords
