@@ -290,16 +290,14 @@ sub search {
   $self->{qp} ||= new Search::QueryParser;
   my $q = $self->{qp}->parse($query_string, $implicitPlus);
 
-  # transform the query structure
-  my $killedWords = {};
-  my $wordsRegexes = [];
-  my $qt = $self->translateQuery($q, $killedWords, $wordsRegexes);
+  # translate the query structure
+  my ($translated_query, $killedWords, $wordsRegexes) = $self->translateQuery($q);
 
   # regex that will be used for highlighting excerpts
   my $strRegex = "(?:" . join("|", uniq @$wordsRegexes) . ")";
 
   # return structure
-  return { scores      => $self->_search($qt),
+  return { scores      => $self->_search($translated_query),
 	   killedWords => [keys %$killedWords],
 	   regex       => qr/$strRegex/i,        };
 }
@@ -456,61 +454,71 @@ sub addToScore (\$$) { # first score arg gets "incremented" by the second arg
 
 
 sub translateQuery { # replace words by ids, remove irrelevant subqueries
-  my ($self, $q, $killedWords, $wordsRegexes) = @_;
+  my ($self, $query) = @_;
 
-  my $r = {};
+  my %killedWords;
+  my @wordsRegexes;
 
-  foreach my $k ('+', '-', '') {
-    foreach my $subQ (@{$q->{$k}}) {
+  my $recursive_translate;
+  $recursive_translate = sub {
+    my $q = shift;
+    my $result = {};
 
-      # ignore items concerning other field names
-      next if $subQ->{field} and $subQ->{field} ne $self->{fieldname};
+    foreach my $k ('+', '-', '') {
+      foreach my $subQ (@{$q->{$k}}) {
 
-      my $val = $subQ->{value};
+        # ignore items concerning other field names
+        next if $subQ->{field} and $subQ->{field} ne $self->{fieldname};
 
-      my $clone = undef;
-      if ($subQ->{op} eq '()') {
-	$clone = {op => '()', 
-		  value => $self->translateQuery($val, $killedWords, $wordsRegexes)};
-      }
-      elsif ($subQ->{op} eq ':') {
-	# split query according to our notion of "term"
-	my @words = ($val =~ /$self->{wregex}/g);
+        my $val = $subQ->{value};
 
-# TODO : 1) accept '*' suffix; 2) find keys in $self->{ixw}; 3) rewrite into
-#        an 'OR' query
-
-#	my @words = ($str =~ /$self->{wregex}\*?/g);
-
-        my $regex1 = join "\\W+", map quotemeta, @words;
-        my $regex2 = join "\\W+", map quotemeta, 
-                                  map {$self->{wfilter}($_)} @words;
-        foreach my $regex ($regex1, $regex2) {
-          $regex = "\\b$regex" if $regex =~ /^\w/;
-          $regex = "$regex\\b" if $regex =~ /\w$/;
+        my $clone = undef;
+        if ($subQ->{op} eq '()') {
+  	$clone = { op => '()', 
+  		   value => $recursive_translate->($val), };
         }
-	push @$wordsRegexes, $regex1;
-	push @$wordsRegexes, $regex2 unless $regex1 eq $regex2;
-	
-	# now translate into word ids
-	foreach my $word (@words) {
-	  my $wf = $self->{wfilter}->($word);
-	  my $wordId = $wf ? ($self->{ixw}{$wf} || 0) : -1;
-	  $killedWords->{$word} = 1 if $wordId < 0;
-	  $word = $wordId;
-	}
+        elsif ($subQ->{op} eq ':') {
+          # split query according to our notion of "term"
+          my @words = ($val =~ /$self->{wregex}/g);
 
-	$val = (@words>1) ? \@words :    # several words : return an array
-	       (@words>0) ? $words[0] :  # just one word : return its id
-               0;                        # no word : return 0 (means "no info")
+  # TODO : 1) accept '*' suffix; 2) find keys in $self->{ixw}; 3) rewrite into
+  #        an 'OR' query
 
-	$clone = {op => ':', value=> $val};
+  #	my @words = ($str =~ /$self->{wregex}\*?/g);
+
+          my $regex1 = join "\\W+", map quotemeta, @words;
+          my $regex2 = join "\\W+", map quotemeta, 
+                                    map {$self->{wfilter}($_)} @words;
+          foreach my $regex ($regex1, $regex2) {
+            $regex = "\\b$regex" if $regex =~ /^\w/;
+            $regex = "$regex\\b" if $regex =~ /\w$/;
+          }
+  	push @wordsRegexes, $regex1;
+  	push @wordsRegexes, $regex2 unless $regex1 eq $regex2;
+
+  	# now translate into word ids
+  	foreach my $word (@words) {
+  	  my $wf = $self->{wfilter}->($word);
+  	  my $wordId = $wf ? ($self->{ixw}{$wf} || 0) : -1;
+  	  $killedWords{$word} = 1 if $wordId < 0;
+  	  $word = $wordId;
+  	}
+
+  	$val = (@words>1) ? \@words :    # several words : return an array
+  	       (@words>0) ? $words[0] :  # just one word : return its id
+                 0;                        # no word : return 0 (means "no info")
+
+  	$clone = {op => ':', value=> $val};
+        }
+        push @{$result->{$k}}, $clone if $clone;
       }
-      push @{$r->{$k}}, $clone if $clone;
     }
-  }
 
-  return $r;
+    return $result;
+  };
+
+
+  return ($recursive_translate->($query), \%killedWords, \@wordsRegexes);
 }
 
 
