@@ -138,24 +138,15 @@ sub add {
   my $docId = shift;
   # my $buf = shift; # using $_[0] instead for efficiency reasons
 
-  $docId <= MAX_DOC_ID
-    or croak "docId $docId is too large";
+  # check that this is a valid docId
+  croak "docId $docId is too large"
+    if $docId > MAX_DOC_ID;
 
   # check if this docId is already used. This can only be done if we have the positions index,
   # because keys of this index contain the docId.
-  if ($self->{ixp}) {
-    # keys in this index are pairs (docId, wordId) -- so to know if a docId is present we
-    # do a sequential search starting at (docId, 0)
-    my $c = $self->{ixpDb}->db_cursor;
-    my $k = pack IXPKEYPACK, $docId, 0;
-    my $v;			# not used, but needed by c_get()
-    my $status = $c->c_get($k, $v, DB_SET_RANGE);
-    if ($status == 0) {
-      my ($check, $wordId) = unpack IXPKEYPACK, $k;
-      $docId == $check
-        and croak "docId $docId is already used (wordId=$wordId)";
-    }
-  }
+  croak "docId $docId is already used"
+    if $self->{ixp} && @{$self->wordIds($docId)};
+
 
   # extract words from the $_[0] buffer
   my %positions;
