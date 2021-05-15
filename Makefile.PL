@@ -5,9 +5,12 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     NAME              => 'Search::Indexer',
     VERSION_FROM      => 'lib/Search/Indexer.pm', # finds $VERSION
-    PREREQ_PM         => {'Search::QueryParser' => '0.91',
-			  'BerkeleyDB'          => '0.22',
-                          'List::MoreUtils'     => 0},
+    PREREQ_PM         => {'Search::QueryParser'            => '0.91',
+			  'BerkeleyDB'                     => '0.22',
+                          'List::Util'                     => 0,
+                          'List::MoreUtils'                => 0,
+                          'Text::Transliterator::Unaccent' => 0,
+                        },
     ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
       (ABSTRACT_FROM  => 'lib/Search/Indexer.pm', # retrieve abstract from module
        AUTHOR         => 'Laurent Dami <laurent.dami AT etat ge ch>') : ()),
