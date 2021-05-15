@@ -37,7 +37,7 @@ use constant {
 # default values for args to new()
   DEFAULT     => {
     writeMode => 0,
-    wregex    => qr/\w+/,
+    wregex    => qr/\p{Word}+/,
     wfilter   => sub { # default filter : lowercase and no accents
       my $word = CORE::fc($_[0]);
       $unaccenter->($word);
@@ -484,14 +484,12 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
   # TODO : 1) accept '*' suffix; 2) find keys in $self->{ixw}; 3) rewrite into
   #        an 'OR' query
 
-  #	my @words = ($str =~ /$self->{wregex}\*?/g);
-
-          my $regex1 = join "\\W+", map quotemeta, @words;
-          my $regex2 = join "\\W+", map quotemeta, 
+          my $regex1 = join "\\P{Word}+", map quotemeta, @words;
+          my $regex2 = join "\\P{Word}+", map quotemeta, 
                                     map {$self->{wfilter}($_)} @words;
           foreach my $regex ($regex1, $regex2) {
-            $regex = "\\b$regex" if $regex =~ /^\w/;
-            $regex = "$regex\\b" if $regex =~ /\w$/;
+            $regex = "\\b$regex" if $regex =~ /^\p{Word}/;
+            $regex = "$regex\\b" if $regex =~ /\p{Word}$/;
           }
   	push @wordsRegexes, $regex1;
   	push @wordsRegexes, $regex2 unless $regex1 eq $regex2;
@@ -506,10 +504,11 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
 
   	$val = (@words>1) ? \@words :    # several words : return an array
   	       (@words>0) ? $words[0] :  # just one word : return its id
-                 0;                        # no word : return 0 (means "no info")
+               0;                        # no word : return 0 (means "no info")
 
   	$clone = {op => ':', value=> $val};
         }
+
         push @{$result->{$k}}, $clone if $clone;
       }
     }
@@ -691,7 +690,7 @@ Give a true value if you intend to write into the index.
 
 =item wregex 
 
-Regex for matching a word (C<qr/\w+/> by default).
+Regex for matching a word (C<qr/\p{Word}+/> by default).
 Will affect both L<add> and L<search> method.
 This regex should not contain any capturing parentheses
 (use non-capturing parentheses C<< (?: ... ) >> instead).
