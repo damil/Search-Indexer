@@ -50,6 +50,11 @@ use constant {
     preMatch     => "<b>",
     postMatch    => "</b>",
     positions    => 1,
+
+    # constants for BM25 relevance computation. See https://fr.wikipedia.org/wiki/Okapi_BM25.
+    # Same figures in ElasticSearch and in Sqlite FTS5
+    bm25_k1      => 1.2,
+    bm25_b       => 0.75,
   }
 };
 
@@ -61,8 +66,7 @@ sub new {
   # parse options
   my $self = {};
   $self->{$_} = exists $args->{$_} ? delete $args->{$_} : DEFAULT->{$_} 
-    foreach qw(writeMode wregex wfilter fieldname 
-               ctxtNumChars maxExcerpts preMatch postMatch positions);
+    foreach keys %{ DEFAULT() };
   my $dir = delete $args->{dir} || ".";
   $dir =~ s{[/\\]$}{};		# remove trailing slash
   my $stopwords = delete $args->{stopwords};
@@ -174,6 +178,14 @@ sub add {
     }
   }
 
+
+  # record nb of words in this document -- under pair (0, $docId) in ixp
+  if ($self->{ixp}) {
+    my $ixpKey = pack IXPKEYPACK, 0, $docId;
+    $self->{ixp}{$ixpKey} =  $word_position;
+  }
+
+  # TODO : store this under ixp(0, 0)
   $self->{ixd}{NDOCS} = 0  if not defined $self->{ixd}{NDOCS};
   $self->{ixd}{NDOCS} += 1;
 }
@@ -367,15 +379,67 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
     return undef;
   }
   else { # scalar value, match single word
+    # retrieve a hash, initially of shape (docId => nb_of_occurrences_of_that_word)
     my $scores = {unpack IXDPACK_L, ($self->{ixd}{$subQ->{value}} || "")};
-    my @k = keys %$scores;
-    if (@k) {
-      my $coeff = log(($self->{ixd}{NDOCS} + 1)/@k) * 100;
-      $scores->{$_} = int($coeff * $scores->{$_}) foreach @k;
+    my @docIds = keys %$scores;
+    my $n_docs_including_word = @docIds;
+
+    # compute the bm25 relevancy score for each doc -- see https://en.wikipedia.org/wiki/Okapi_BM25
+    # results are stored in same hash (overwrite the nb of occurrences)
+    if ($n_docs_including_word) {
+      my $n_total_docs     = $self->{ixd}{NDOCS};
+
+      my $inverse_doc_freq = log(($n_total_docs - $n_docs_including_word + 0.5)
+                                 /
+                                 ($n_docs_including_word + 0.5));
+
+      my $average_doc_length = $self->average_doc_length;
+
+      foreach my $docId (@docIds) {
+        my $freq_word_in_doc = $scores->{$docId};
+        my $ixpKey           = pack IXPKEYPACK, 0, $docId;
+        my $n_words_in_doc   = $self->{ixp}{$ixpKey};
+        my $n_words_ratio    = $n_words_in_doc / $average_doc_length;
+       $scores->{$docId} = $inverse_doc_freq
+                          * ( $freq_word_in_doc * ($self->{bm25_k1} + 1))
+                          / ($freq_word_in_doc + $self->{bm25_k1} *
+                                                (1 - $self->{bm25_b}
+                                                   + $self->{bm25_b} * $n_words_ratio));
+      }
     }
+
     return $scores;
   }
 }
+
+
+
+sub average_doc_length {
+  my ($self) = @_;
+
+  # TODO : this should be cached until next add()
+
+  my $n_tot_words = 0;
+
+  # start a cursor at pair (0, 0)
+  my $c = $self->{ixpDb}->db_cursor;
+  my ($k, $v);
+  $k = pack IXPKEYPACK, 0, 0;
+  my $status = $c->c_get($k, $v, DB_SET_RANGE);
+
+  # proceed sequentially through the pairs of shape (0, n)
+  my @all_docIds;
+  while ($status == 0) {
+    my ($RESERVED, $docId) = unpack IXPKEYPACK, $k;
+    last if $RESERVED != 0;
+    push @all_docIds, $docId;
+    $n_tot_words        += $v;
+    $status = $c->c_get($k, $v, DB_NEXT);
+  }
+
+  return $n_tot_words / scalar(@all_docIds);
+}
+
 
 
 sub matchExactPhrase {
@@ -543,7 +607,7 @@ sub excerpts {
   }
 
   foreach (@$matches) { # extend start and end positions by $self->{ctxtNumChars}
-    $_->[0] = ($_->[0] < $nc) ? 0 : $_->[0] - $nc; 
+    $_->[0] = ($_->[0] < $nc) ? 0 : $_->[0] - $nc;
     $_->[1] += $nc;
   }
 
