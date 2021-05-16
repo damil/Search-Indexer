@@ -178,16 +178,11 @@ sub add {
     }
   }
 
-
   # record nb of words in this document -- under pair (0, $docId) in ixp
   if ($self->{ixp}) {
     my $ixpKey = pack IXPKEYPACK, 0, $docId;
     $self->{ixp}{$ixpKey} =  $word_position;
   }
-
-  # TODO : store this under ixp(0, 0)
-  $self->{ixd}{NDOCS} = 0  if not defined $self->{ixd}{NDOCS};
-  $self->{ixd}{NDOCS} += 1;
 }
 
 
@@ -226,7 +221,7 @@ sub remove {
     }
   }
 
-  $self->{ixd}{NDOCS} -= 1;
+  # TODO : remove nb of words from $self->{ixp}{0, $docid};
 }
 
 sub wordIds {
@@ -387,13 +382,11 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
     # compute the bm25 relevancy score for each doc -- see https://en.wikipedia.org/wiki/Okapi_BM25
     # results are stored in same hash (overwrite the nb of occurrences)
     if ($n_docs_including_word) {
-      my $n_total_docs     = $self->{ixd}{NDOCS};
+      my ($n_total_docs, $average_doc_length) = $self->global_doc_stats;
 
       my $inverse_doc_freq = log(($n_total_docs - $n_docs_including_word + 0.5)
                                  /
                                  ($n_docs_including_word + 0.5));
-
-      my $average_doc_length = $self->average_doc_length;
 
       foreach my $docId (@docIds) {
         my $freq_word_in_doc = $scores->{$docId};
@@ -414,11 +407,12 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
 
 
 
-sub average_doc_length {
+sub global_doc_stats {
   my ($self) = @_;
 
   # TODO : this should be cached until next add()
 
+  my $n_docs      = 0;
   my $n_tot_words = 0;
 
   # start a cursor at pair (0, 0)
@@ -428,16 +422,18 @@ sub average_doc_length {
   my $status = $c->c_get($k, $v, DB_SET_RANGE);
 
   # proceed sequentially through the pairs of shape (0, n)
-  my @all_docIds;
+
   while ($status == 0) {
     my ($RESERVED, $docId) = unpack IXPKEYPACK, $k;
     last if $RESERVED != 0;
-    push @all_docIds, $docId;
+    $n_docs += 1;
     $n_tot_words        += $v;
     $status = $c->c_get($k, $v, DB_NEXT);
   }
 
-  return $n_tot_words / scalar(@all_docIds);
+  my $avg = $n_tot_words / $n_docs;
+
+  return ($n_docs, $avg);
 }
 
 
