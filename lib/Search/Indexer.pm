@@ -18,8 +18,6 @@ our $VERSION = "0.77";
 my $unaccenter = Text::Transliterator::Unaccent->new(upper => 0);
 
 
-sub addToScore (\$$);
-
 use constant {
 
 # max size of various ids
@@ -322,8 +320,12 @@ sub _search {
 
     # otherwise, intersect with previous result set
     foreach my $docId (keys %$scores) {
-      delete $scores->{$docId} and next if not defined $sc->{$docId};
-      addToScore $scores->{$docId}, $sc->{$docId}; # otherwise
+      if (defined $sc->{$docId}) {
+        $scores->{$docId} += $sc->{$docId};
+      }
+      else {
+        delete $scores->{$docId};
+      }
     }
   }
 
@@ -338,7 +340,7 @@ sub _search {
     # otherwise, combine with previous result set
     foreach my $docId (keys %$sc) {
       if (defined $scores->{$docId}) { # docId was already there, add new score
-	addToScore $scores->{$docId}, $sc->{$docId};
+	$scores->{$docId} += $sc->{$docId};
       }
       elsif ($noMandatorySubq){ # insert a new docId to the result set
 	$scores->{$docId} = $sc->{$docId};
@@ -473,9 +475,13 @@ sub matchExactPhrase {
           } else { # current word found in current doc, check if positions match
             my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
             my @newPos = unpack IXPPACK, $self->{ixp}{$ixpKey};
-            $pos{$docId} = nearPositions($pos{$docId}, \@newPos, $wordDelta)
-              and addToScore $scores->{$docId}, $sc->{$docId}
-                or delete $scores->{$docId};
+            $pos{$docId} = nearPositions($pos{$docId}, \@newPos, $wordDelta);
+            if ($pos{$docId}) {
+              $scores->{$docId} += $sc->{$docId};
+            }
+            else {
+              delete $scores->{$docId};
+            }
           }
         }
       }  # end foreach my $docId (keys %$scores)
@@ -503,15 +509,6 @@ sub nearPositions {
 
   return @result ? \@result : undef;
 }
-
-
-
-sub addToScore (\$$) { # first score arg gets "incremented" by the second arg
-  my ($ptScore1, $score2) = @_;
-  $$ptScore1 = 0 if not defined $$ptScore1;
-  $$ptScore1 += $score2 if $score2; # TODO : find better formula for score combination !
-}
-
 
 sub translateQuery { # replace words by ids, remove irrelevant subqueries
   my ($self, $query) = @_;
