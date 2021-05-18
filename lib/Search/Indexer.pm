@@ -76,20 +76,7 @@ sub new {
     if $self->{writeMode} and $self->{positions} 
        and -f "$dir/ixd.bdb" and not -f "$dir/ixp.bdb";
 
-  # BerkeleyDB environment should allow us to do proper locking for 
-  # concurrent access ; but seems to be incompatible with the 
-  # -Cachesize argument, so I commented it out ... need to learn more about
-  # BerkeleyDB ...
-#   my $dbEnv = new BerkeleyDB::Env
-#     -Home => $dir,
-#     -Flags => DB_INIT_CDB | DB_INIT_MPOOL | DB_CDB_ALLDB |
-#                 ($self->{writeMode} ? DB_CREATE : 0),
-#     -Verbose => 1
-#       or croak "new BerkeleyDB::Env : $^E  $BerkeleyDB::Error" ;
-
-
-  my @bdb_args = (# -Env => $dbEnv, # commented out, see explanation above
-		  -Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY),
+  my @bdb_args = (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY),
 		  ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ()));
 
   # 3 index files :
@@ -99,24 +86,28 @@ sub new {
       -Filename => "$dir/ixw.bdb", @bdb_args
 	or croak "open $dir/ixw.bdb : $^E $BerkeleyDB::Error";
 
+  # TODO  : try with Recno instead of Hash -- but need to store _NWORD under [0]
   # ixd : wordId => list of (docId, nOccur)
   $self->{ixdDb} = tie %{$self->{ixd}},
     'BerkeleyDB::Hash', 
       -Filename => "$dir/ixd.bdb", @bdb_args
 	or croak "open $dir/ixd.bdb : $^E $BerkeleyDB::Error";
 
-  if (-f "$dir/ixp.bdb" || $self->{writeMode} && $self->{positions}) {
-    # ixp : (docId, wordId) => list of positions of word in doc
-    $self->{ixpDb} = tie %{$self->{ixp}},
-      'BerkeleyDB::Btree', 
-        -Filename => "$dir/ixp.bdb", @bdb_args
-          or croak "open $dir/ixp.bdb : $^E $BerkeleyDB::Error";
-  }
+  # ixp : (int pair)      => data, namely:
+  #       (0, 0)          => (total nb of docs, average word count per doc)
+  #       (0, docId)      => nb of words in docId
+  #       (docId, wordId) => list of positions of word in doc
+  $self->{ixpDb} = tie %{$self->{ixp}},
+    'BerkeleyDB::Btree', 
+      -Filename => "$dir/ixp.bdb", @bdb_args
+        or croak "open $dir/ixp.bdb : $^E $BerkeleyDB::Error";
 
-  # optional list of stopwords may be given as a list or as a filename
-  if ($stopwords) { 
+  # an optional list of stopwords may be given as a list or as a filename
+  if ($stopwords) {
     $self->{writeMode} or croak "must be in writeMode to specify stopwords";
-    if (not ref $stopwords) { # if scalar, name of stopwords file
+
+    # if scalar, treated as the name of the stopwords file => read it
+    if (not ref $stopwords) { 
       my $fh;
       open $fh, "<", $stopwords or
 	open $fh, "<", "$dir/$stopwords" or
@@ -126,6 +117,8 @@ sub new {
       close $buf;
       $stopwords = [$buf =~ /$self->{wregex}/g];
     }
+
+    # store stopwords in ixw with wordId=-1
     foreach my $word (@$stopwords) {
       $self->{ixw}{$word} = -1;
     }
@@ -424,12 +417,11 @@ sub global_doc_stats {
   my $status = $c->c_get($k, $v, DB_SET_RANGE);
 
   # proceed sequentially through the pairs of shape (0, n)
-
   while ($status == 0) {
     my ($RESERVED, $docId) = unpack IXPKEYPACK, $k;
     last if $RESERVED != 0;
-    $n_docs += 1;
-    $n_tot_words        += $v;
+    $n_docs      += 1;
+    $n_tot_words += $v;
     $status = $c->c_get($k, $v, DB_NEXT);
   }
 
@@ -465,16 +457,17 @@ sub matchExactPhrase {
           $pos{$docId} = [unpack IXPPACK, $self->{ixp}{$ixpKey}];
         }
       }
-    } 
+    }
     else {                    # combine with previous result set
-      $wordDelta++; 
+      $wordDelta++;
       foreach my $docId (keys %$scores) {
         if ($sc) { # if we have info about current word (is not a stopword)
           if (not defined $sc->{$docId}) { # current word not in current doc
             delete $scores->{$docId};
-          } else { # current word found in current doc, check if positions match
-            my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
-            my @newPos = unpack IXPPACK, $self->{ixp}{$ixpKey};
+          }
+          else { # current word found in current doc, check if positions match
+            my $ixpKey   = pack IXPKEYPACK, $docId, $wordId;
+            my @newPos   = unpack IXPPACK, $self->{ixp}{$ixpKey};
             $pos{$docId} = nearPositions($pos{$docId}, \@newPos, $wordDelta);
             if ($pos{$docId}) {
               $scores->{$docId} += $sc->{$docId};
@@ -538,8 +531,8 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
           # split query according to our notion of "term"
           my @words = ($val =~ /$self->{wregex}/g);
 
-  # TODO : 1) accept '*' suffix; 2) find keys in $self->{ixw}; 3) rewrite into
-  #        an 'OR' query
+          # TODO : 1) accept '*' suffix; 2) find keys in $self->{ixw}; 3) rewrite into
+          #        an 'OR' query
 
           my $regex1 = join "\\P{Word}+", map quotemeta, @words;
           my $regex2 = join "\\P{Word}+", map quotemeta, 
