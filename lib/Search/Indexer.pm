@@ -146,12 +146,6 @@ sub add {
   croak "docId $docId is too large"
     if $docId > MAX_DOC_ID;
 
-  # check if this docId is already used. This can only be done if we have the positions index,
-  # because keys of this index contain the docId.
-  croak "docId $docId is already used"
-    if $self->{ixp} && @{$self->wordIds($docId)};
-
-
   # extract words from the $_[0] buffer
   my %positions;
   my $word_position = 1;
@@ -164,10 +158,15 @@ sub add {
     $word_position += 1;
   }
 
+  # record nb of words in this document -- under pair (0, $docId) in ixp
+  my $ixpKey = pack IXPKEYPACK, 0, $docId;
+  croak "docId $docId is already used" if exists $self->{ixp}{$ixpKey};
+  $self->{ixp}{$ixpKey} = $word_position;
+
   # insert words into the indices
   foreach my $wordId (keys %positions) { 
 
-    # insert into the document index
+    # insert this doc into the list for $wordId
     my $n_occur = min (scalar(@{$positions{$wordId}}), 255);
     $self->{ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
 
@@ -177,10 +176,6 @@ sub add {
       $self->{ixp}{$ixpKey} =  pack(IXPPACK, @{$positions{$wordId}});
     }
   }
-
-  # record nb of words in this document -- under pair (0, $docId) in ixp
-  my $ixpKey = pack IXPKEYPACK, 0, $docId;
-  $self->{ixp}{$ixpKey} =  $word_position;
 }
 
 
