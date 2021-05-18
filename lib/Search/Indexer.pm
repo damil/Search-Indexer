@@ -76,31 +76,31 @@ sub new {
     if $self->{writeMode} and $self->{positions} 
        and -f "$dir/ixd.bdb" and not -f "$dir/ixp.bdb";
 
-  my @bdb_args = (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY),
-		  ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ()));
+  # sub for tieing databases
+  my $tie_db = sub {
+    my ($db_subname, $db_kind) = @_;
+    tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind",
+      -Filename => "$dir/ix.bdb",
+      -Subname => $db_subname,
+      (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
+      ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ())
+	or croak "open $dir/ix.bdb($db_subname) : $^E $BerkeleyDB::Error";
+  };
 
-  # 3 index files :
+
   # ixw : word => wordId (or -1 for stopwords)
-  $self->{ixwDb} = tie %{$self->{ixw}},
-    'BerkeleyDB::Btree', 
-      -Filename => "$dir/ixw.bdb", @bdb_args
-	or croak "open $dir/ixw.bdb : $^E $BerkeleyDB::Error";
+  $self->{ixwDb} = $tie_db->(ixw => 'Btree');
 
   # TODO  : try with Recno instead of Hash -- but need to store _NWORD under [0]
   # ixd : wordId => list of (docId, nOccur)
-  $self->{ixdDb} = tie %{$self->{ixd}},
-    'BerkeleyDB::Hash', 
-      -Filename => "$dir/ixd.bdb", @bdb_args
-	or croak "open $dir/ixd.bdb : $^E $BerkeleyDB::Error";
+  $self->{ixdDb} = $tie_db->(ixd => 'Hash');
 
   # ixp : (int pair)      => data, namely:
   #       (0, 0)          => (total nb of docs, average word count per doc)
   #       (0, docId)      => nb of words in docId
-  #       (docId, wordId) => list of positions of word in doc
-  $self->{ixpDb} = tie %{$self->{ixp}},
-    'BerkeleyDB::Btree', 
-      -Filename => "$dir/ixp.bdb", @bdb_args
-        or croak "open $dir/ixp.bdb : $^E $BerkeleyDB::Error";
+  #       (docId, wordId) => list of positions of word in doc -- only if $self->{positions}
+  $self->{ixpDb} = $tie_db->(ixp => 'Btree');
+
 
   # an optional list of stopwords may be given as a list or as a filename
   if ($stopwords) {
@@ -122,6 +122,15 @@ sub new {
     foreach my $word (@$stopwords) {
       $self->{ixw}{$word} = -1;
     }
+  }
+
+  # must know if this DB uses word positions or not
+  if ($self->{writeMode} && !$self->{positions}) {
+    my $c = $self->{ixpDb}->db_cursor;
+    my ($k, $v);
+    $k = pack IXPKEYPACK, 1, 0;
+    my $status = $c->c_get($k, $v, DB_SET_RANGE);
+    $self->{positions} = $status == 0;
   }
 
   bless $self, $class;
@@ -163,17 +172,15 @@ sub add {
     $self->{ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
 
     # insert into the positions index
-    if ($self->{ixp}) {
+    if ($self->{positions}) {
       my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
       $self->{ixp}{$ixpKey} =  pack(IXPPACK, @{$positions{$wordId}});
     }
   }
 
   # record nb of words in this document -- under pair (0, $docId) in ixp
-  if ($self->{ixp}) {
-    my $ixpKey = pack IXPKEYPACK, 0, $docId;
-    $self->{ixp}{$ixpKey} =  $word_position;
-  }
+  my $ixpKey = pack IXPKEYPACK, 0, $docId;
+  $self->{ixp}{$ixpKey} =  $word_position;
 }
 
 
@@ -185,7 +192,7 @@ sub remove {
 
   # retrieve or recompute the word ids
   my $wordIds;
-  if ($self->{ixp}) { # if using word positions
+  if ($self->{positions}) { # if using word positions
     not defined $_[0] or carp "remove() : unexpected 'buf' argument";
     $wordIds= $self->wordIds($docId);
   }
@@ -206,7 +213,7 @@ sub remove {
     my %docs = unpack IXDPACK_L, $self->{ixd}{$wordId};
     delete $docs{$docId};
     $self->{ixd}{$wordId} = pack IXDPACK_L, %docs;
-    if ($self->{ixp}) {
+    if ($self->{positions}) {
       my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
       delete $self->{ixp}{$ixpKey};
     }
@@ -219,7 +226,7 @@ sub wordIds {
   my $self         = shift;
   my $target_docId = shift;
 
-  $self->{ixpDb} 
+  $self->{positions}
     or croak "wordIds() not available (index was created with positions=>0)";
 
   # position cursor at pair ($target_docId, 0)
@@ -377,6 +384,7 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
     # compute the bm25 relevancy score for each doc -- see https://en.wikipedia.org/wiki/Okapi_BM25
     # results are stored in same hash (overwrite the nb of occurrences)
     if ($n_docs_including_word) {
+      $DB::single = 1;
       my ($n_total_docs, $average_doc_length) = $self->global_doc_stats;
 
       my $inverse_doc_freq = log(($n_total_docs - $n_docs_including_word + 0.5)
@@ -425,7 +433,7 @@ sub global_doc_stats {
     $status = $c->c_get($k, $v, DB_NEXT);
   }
 
-  my $avg = $n_tot_words / $n_docs;
+  my $avg = $n_docs ? $n_tot_words / $n_docs : 0;
 
   return ($n_docs, $avg);
 }
@@ -435,7 +443,7 @@ sub global_doc_stats {
 sub matchExactPhrase {
   my ($self, $subQ) = @_;
 
-  if (! $self->{ixp}) { # if not indexed with positions
+  if (! $self->{positions}) {
     # translate into an AND query
     my $fake_query = {'+' => [map {{op    => ':',
                                     value => $_  }} @{$subQ->{value}}]};
@@ -484,7 +492,7 @@ sub matchExactPhrase {
   return $scores;
 }
 
-sub nearPositions { 
+sub nearPositions {
   my ($set1, $set2, $wordDelta) = @_;
 # returns the set of positions in $set2 which are "close enough" (<= $wordDelta)
 # to positions in $set1. Assumption : input sets are sorted.
