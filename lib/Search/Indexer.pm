@@ -62,7 +62,7 @@ sub new {
   my $args = ref $_[0] eq 'HASH' ? $_[0] : {@_};
 
   # parse options
-  my $self = {};
+  my $self = bless {}, $class;
   $self->{$_} = exists $args->{$_} ? delete $args->{$_} : DEFAULT->{$_} 
     foreach keys %{ DEFAULT() };
   my $dir = delete $args->{dir} || ".";
@@ -125,25 +125,33 @@ sub new {
   }
 
   # on a fresh db, store an empty value under ixp(1, 0) to mark that we are using positions
-  my $k_positions = pack IXPKEYPACK, 1, 0;
   if ($is_fresh_db) {
     if ($self->{positions}) {
-      $self->{ixp}{$k_positions} = "";
+      $self->ixp(1, 0) = "";
     }
   }
 
   # on a non-fresh db, must know if this DB uses word positions or not
   else {
-    my $has_positions = exists $self->{ixp}{$k_positions};
+    # my $has_positions = exists $self->{ixp}{$k_positions};
+    my $has_positions = defined $self->ixp(1, 0);
 
     croak "can't require 'positions => 1' after index creation time"
-      if $self->{positions} && !$has_positions;
+      if $self->{writeMode} && $self->{positions} && !$has_positions;
 
     $self->{positions} = $has_positions;
   }
 
-  bless $self, $class;
+  return $self;
 }
+
+
+sub ixp : lvalue {
+  my ($self, $v1, $v2) = @_;
+  my $ixpKey = pack IXPKEYPACK, $v1, $v2;
+  return $self->{ixp}{$ixpKey};
+}
+
 
 
 sub add {
@@ -168,9 +176,8 @@ sub add {
   }
 
   # record nb of words in this document -- under pair (0, $docId) in ixp
-  my $ixpKey = pack IXPKEYPACK, 0, $docId;
-  croak "docId $docId is already used" if exists $self->{ixp}{$ixpKey};
-  $self->{ixp}{$ixpKey} = $word_position;
+  croak "docId $docId is already used" if defined $self->ixp(0, $docId);
+  $self->ixp(0, $docId) = $word_position;
 
   # insert words into the indices
   foreach my $wordId (keys %positions) { 
@@ -181,8 +188,7 @@ sub add {
 
     # insert into the positions index
     if ($self->{positions}) {
-      my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
-      $self->{ixp}{$ixpKey} =  pack(IXPPACK, @{$positions{$wordId}});
+      $self->ixp($docId, $wordId) =  pack(IXPPACK, @{$positions{$wordId}});
     }
   }
 }
@@ -218,8 +224,8 @@ sub remove {
     delete $docs{$docId};
     $self->{ixd}{$wordId} = pack IXDPACK_L, %docs;
     if ($self->{positions}) {
-      my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
-      delete $self->{ixp}{$ixpKey};
+      my $k = pack IXPKEYPACK, $docId, $wordId;
+      delete $self->{ixp}{$k};
     }
   }
 
@@ -388,7 +394,6 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
     # compute the bm25 relevancy score for each doc -- see https://en.wikipedia.org/wiki/Okapi_BM25
     # results are stored in same hash (overwrite the nb of occurrences)
     if ($n_docs_including_word) {
-      $DB::single = 1;
       my ($n_total_docs, $average_doc_length) = $self->global_doc_stats;
 
       my $inverse_doc_freq = log(($n_total_docs - $n_docs_including_word + 0.5)
@@ -397,8 +402,7 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
 
       foreach my $docId (@docIds) {
         my $freq_word_in_doc = $scores->{$docId};
-        my $ixpKey           = pack IXPKEYPACK, 0, $docId;
-        my $n_words_in_doc   = $self->{ixp}{$ixpKey};
+        my $n_words_in_doc   = $self->ixp(0, $docId);
         my $n_words_ratio    = $n_words_in_doc / $average_doc_length;
        $scores->{$docId} = $inverse_doc_freq
                           * ( $freq_word_in_doc * ($self->{bm25_k1} + 1))
@@ -465,8 +469,7 @@ sub matchExactPhrase {
       if ($sc) {
         $scores = $sc;
         foreach my $docId (keys %$scores) {
-          my $ixpKey = pack IXPKEYPACK, $docId, $wordId;
-          $pos{$docId} = [unpack IXPPACK, $self->{ixp}{$ixpKey}];
+          $pos{$docId} = [unpack IXPPACK, $self->ixp($docId, $wordId)];
         }
       }
     }
@@ -478,8 +481,7 @@ sub matchExactPhrase {
             delete $scores->{$docId};
           }
           else { # current word found in current doc, check if positions match
-            my $ixpKey   = pack IXPKEYPACK, $docId, $wordId;
-            my @newPos   = unpack IXPPACK, $self->{ixp}{$ixpKey};
+            my @newPos   = unpack IXPPACK, $self->ixp($docId, $wordId);
             $pos{$docId} = nearPositions($pos{$docId}, \@newPos, $wordDelta);
             if ($pos{$docId}) {
               $scores->{$docId} += $sc->{$docId};
