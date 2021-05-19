@@ -69,22 +69,20 @@ sub new {
   $dir =~ s{[/\\]$}{};		# remove trailing slash
   my $stopwords = delete $args->{stopwords};
 
-  # check if invalid options
+  # complain if we found invalid options
   my @remaining = keys %$args;
   croak "unexpected option : $remaining[0]" if @remaining;
-  croak "can't add 'positions' after index creation time"
-    if $self->{writeMode} and $self->{positions} 
-       and -f "$dir/ixd.bdb" and not -f "$dir/ixp.bdb";
 
-  # sub for tieing databases
+  my $is_fresh_db = ! -e "$dir/ixp.bdb";
+
   my $tie_db = sub {
     my ($db_subname, $db_kind) = @_;
+    my $db_file     = "$dir/$db_subname.bdb";
     tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind",
-      -Filename => "$dir/ix.bdb",
-      -Subname => $db_subname,
+      -Filename => $db_file,
       (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
       ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ())
-	or croak "open $dir/ix.bdb($db_subname) : $^E $BerkeleyDB::Error";
+	or croak "open $db_file : $! $^E $BerkeleyDB::Error";
   };
 
 
@@ -95,9 +93,11 @@ sub new {
   # ixd : wordId => list of (docId, nOccur)
   $self->{ixdDb} = $tie_db->(ixd => 'Hash');
 
+
   # ixp : (int pair)      => data, namely:
   #       (0, 0)          => (total nb of docs, average word count per doc)
   #       (0, docId)      => nb of words in docId
+  #       (1, 0)          => if present, that db stores positions of words
   #       (docId, wordId) => list of positions of word in doc -- only if $self->{positions}
   $self->{ixpDb} = $tie_db->(ixp => 'Btree');
 
@@ -124,13 +124,22 @@ sub new {
     }
   }
 
-  # must know if this DB uses word positions or not
-  if ($self->{writeMode} && !$self->{positions}) {
-    my $c = $self->{ixpDb}->db_cursor;
-    my ($k, $v);
-    $k = pack IXPKEYPACK, 1, 0;
-    my $status = $c->c_get($k, $v, DB_SET_RANGE);
-    $self->{positions} = $status == 0;
+  # on a fresh db, store an empty value under ixp(1, 0) to mark that we are using positions
+  my $k_positions = pack IXPKEYPACK, 1, 0;
+  if ($is_fresh_db) {
+    if ($self->{positions}) {
+      $self->{ixp}{$k_positions} = "";
+    }
+  }
+
+  # on a non-fresh db, must know if this DB uses word positions or not
+  else {
+    my $has_positions = exists $self->{ixp}{$k_positions};
+
+    croak "can't require 'positions => 1' after index creation time"
+      if $self->{positions} && !$has_positions;
+
+    $self->{positions} = $has_positions;
   }
 
   bless $self, $class;

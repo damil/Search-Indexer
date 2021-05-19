@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 8 ;
+use Test::More;
 
 #use locale;
 # (just for these tests, don't use locale so that the results are not
@@ -196,4 +196,4 @@ my $words_sa = $i->words("sa");
 ok(eq_array($words_sa, [qw(sagen sails salda sans sante say)]),
    "words starting with 'sa'");
 
-unlink foreach (<*.bdb>);	# remove index databases
+done_testing();
