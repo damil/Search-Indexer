@@ -167,7 +167,8 @@ sub add {
   my $word_position = 1;
  WORD:
   while ($_[0] =~ /$self->{wregex}/g) {
-    my $word   = $self->{wfilter}->($&) or next WORD;
+    my $word = $self->{wfilter} ? $self->{wfilter}->($&) : $&
+      or next WORD;
     my $wordId = $self->{ixw}{$word}
                || ($self->{ixw}{$word} = ++$self->{ixw}{_NWORDS}); # create new wordId
     push @{$positions{$wordId}}, $word_position if $wordId > 0;
@@ -183,7 +184,8 @@ sub add {
 
     # insert this doc into the list for $wordId
     my $n_occur = @{$positions{$wordId}};
-    $self->{ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
+    # $self->{ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
+    $self->{TMP_ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
 
     # insert into the positions index
     if ($self->{positions}) {
@@ -191,6 +193,17 @@ sub add {
     }
   }
 }
+
+sub sync_TMP_ixd {
+  my $self = shift;
+  if ($self->{TMP_ixd}) {
+    while (my ($wordId, $lst_docs) = each %{$self->{TMP_ixd}}) {
+      $self->{ixd}{$wordId} .= $lst_docs;
+    }
+    delete $self->{TMP_ixd};
+  }
+}
+
 
 
 
@@ -209,7 +222,7 @@ sub remove {
     defined $_[0] or carp "remove() : need a 'buf' argument";
     $wordIds = [grep {defined $_ and $_ > 0} 
                 map {$self->{ixw}{$_}}
-                uniq map {$self->{wfilter}->($_)} 
+                uniq map {$self->{wfilter} ? $self->{wfilter}->($_) : $_}
                          ($_[0] =~ /$self->{wregex}/g)];
   }
 
@@ -299,6 +312,11 @@ sub search {
   my $self = shift;
   my $query_string = shift;
   my $implicitPlus = shift;
+
+
+  # TMP HACK
+  $self->sync_TMP_ixd;
+
 
   # parse the query string
   $self->{qp} ||= new Search::QueryParser;
@@ -548,9 +566,10 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
           #        an 'OR' query
 
           my $regex1 = join "\\P{Word}+", map quotemeta, @words;
-          my $regex2 = join "\\P{Word}+", map quotemeta, 
-                                    map {$self->{wfilter}($_)} @words;
-          foreach my $regex ($regex1, $regex2) {
+          my $regex2 = $self->{wfilter} ? join "\\P{Word}+", map quotemeta,
+                                               map {$self->{wfilter}->($_)} @words
+                                        : undef;
+          foreach my $regex (grep {$_} $regex1, $regex2) {
             $regex = "\\b$regex" if $regex =~ /^\p{Word}/;
             $regex = "$regex\\b" if $regex =~ /\p{Word}$/;
           }
@@ -559,7 +578,7 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
 
   	# now translate into word ids
   	foreach my $word (@words) {
-  	  my $wf = $self->{wfilter}->($word);
+  	  my $wf = $self->{wfilter} ? $self->{wfilter}->($word) : $word;
   	  my $wordId = $wf ? ($self->{ixw}{$wf} || 0) : -1;
   	  $killedWords{$word} = 1 if $wordId < 0;
   	  $word = $wordId;
