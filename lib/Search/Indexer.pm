@@ -25,8 +25,8 @@ use constant {
   MAX_POS_ID  => 0xFFFFFFFF, # position_id
 
 # encodings for pack/unpack
-  IXDPACK     => 'wC',       # docId : compressed int; freq : unsigned char
-  IXDPACK_L   => '(wC)*',    # list of above
+  IXDPACK     => 'ww',       # ixd values : pairs (compressed int, nb_occur)
+  IXDPACK_L   => '(ww)*',    # list of above
   IXPPACK     => 'w*',       # word positions : list of compressed ints
   IXPKEYPACK  => 'ww',       # key for ixp : (docId, wordId)
 
@@ -133,7 +133,6 @@ sub new {
 
   # on a non-fresh db, must know if this DB uses word positions or not
   else {
-    # my $has_positions = exists $self->{ixp}{$k_positions};
     my $has_positions = defined $self->ixp(1, 0);
 
     croak "can't require 'positions => 1' after index creation time"
@@ -183,7 +182,7 @@ sub add {
   foreach my $wordId (keys %positions) { 
 
     # insert this doc into the list for $wordId
-    my $n_occur = min (scalar(@{$positions{$wordId}}), 255);
+    my $n_occur = @{$positions{$wordId}};
     $self->{ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
 
     # insert into the positions index
