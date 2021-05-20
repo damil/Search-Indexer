@@ -79,30 +79,25 @@ sub new {
                 (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
                 ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ()));
 
-    if ($db_kind eq 'Recno') {
-      tie @{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
-        or croak "open $db_file : $! $^E $BerkeleyDB::Error";
-    }
-    else {
-      tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
-        or croak "open $db_file : $! $^E $BerkeleyDB::Error";
-    }
+    $self->{$db_subname . 'Db'} =
+      $db_kind eq 'Recno' ? tie @{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
+                          : tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
+      or croak "open $db_file : $! $^E $BerkeleyDB::Error";
   };
 
 
   # SUBDATABASE ixw : word => wordId (or -1 for stopwords)
-  $self->{ixwDb} = $tie_db->(ixw => 'Btree');
+  $tie_db->(ixw => 'Btree');
 
   # SUBDATABASE ixd : wordId => list of (docId, nOccur)
-  $self->{ixdDb} = $tie_db->(ixd => 'Recno');
+  $tie_db->(ixd => 'Recno');
 
   # SUBDATABASE ixp : (int pair) => data, namely:
   #    (0, 0)          => (total nb of docs, average word count per doc)
   #    (0, docId)      => nb of words in docId
   #    (1, 0)          => flag to store the value of $self->{positions}
   #    (docId, wordId) => list of positions of word in doc -- only if $self->{positions}
-  $self->{ixpDb} = $tie_db->(ixp => 'Btree');
-
+  $tie_db->(ixp => 'Btree');
 
   # an optional list of stopwords may be given as a list or as a filename
   if ($stopwords) {
