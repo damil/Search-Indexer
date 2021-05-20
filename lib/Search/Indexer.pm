@@ -1,5 +1,5 @@
 package Search::Indexer;
-
+use 5.16.0; # needed for CORE::fc
 use strict;
 use warnings;
 use Carp;
@@ -10,14 +10,9 @@ use List::MoreUtils                 qw/uniq/;
 use Text::Transliterator::Unaccent;
 
 
-# TODO : experiment with bit vectors (cf vec() and pack "b*" for combining 
-#        result sets
-
 our $VERSION = "0.77";
 
-my $unaccenter = Text::Transliterator::Unaccent->new(upper => 0);
-
-
+use constant unaccenter => Text::Transliterator::Unaccent->new(upper => 0);
 use constant {
 
 # max size of various ids
@@ -30,15 +25,16 @@ use constant {
   IXPPACK     => 'w*',       # word positions : list of compressed ints
   IXPKEYPACK  => 'ww',       # key for ixp : (docId, wordId)
 
-  WRITECACHESIZE => (1 << 24), # arbitrary big value; seems good enough but need tuning
+  WRITECACHESIZE => (1 << 24), # arbitrary big value; seems good enough but may need tuning
 
 # default values for args to new()
   DEFAULT     => {
     writeMode => 0,
+    positions => 1,
     wregex    => qr/\p{Word}+/,
     wfilter   => sub { # default filter : lowercase and no accents
       my $word = CORE::fc($_[0]);
-      $unaccenter->($word);
+      unaccenter->($word);
       return $word;
     },
     fieldname => '',
@@ -47,10 +43,9 @@ use constant {
     maxExcerpts  => 5,
     preMatch     => "<b>",
     postMatch    => "</b>",
-    positions    => 1,
 
-    # constants for BM25 relevance computation. See https://fr.wikipedia.org/wiki/Okapi_BM25.
-    # Same figures in ElasticSearch and in Sqlite FTS5
+    # constants for computing BM25 relevance. See https://fr.wikipedia.org/wiki/Okapi_BM25.
+    # ElasticSearch and Sqlite FTS5 use the same values
     bm25_k1      => 1.2,
     bm25_b       => 0.75,
   }
@@ -73,11 +68,13 @@ sub new {
   my @remaining = keys %$args;
   croak "unexpected option : $remaining[0]" if @remaining;
 
+  # remember if this is a fresh database
   my $is_fresh_db = ! -e "$dir/ixp.bdb";
 
+  # utility sub to connect to one of subdatabases
   my $tie_db = sub {
     my ($db_subname, $db_kind) = @_;
-    my $db_file     = "$dir/$db_subname.bdb";
+    my $db_file = "$dir/$db_subname.bdb";
     tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind",
       -Filename => $db_file,
       (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
@@ -86,19 +83,18 @@ sub new {
   };
 
 
-  # ixw : word => wordId (or -1 for stopwords)
+  # SUBDATABASE ixw : word => wordId (or -1 for stopwords)
   $self->{ixwDb} = $tie_db->(ixw => 'Btree');
 
-  # TODO  : try with Recno instead of Hash -- but need to store _NWORD under [0]
-  # ixd : wordId => list of (docId, nOccur)
+  # TODO  : try with Recno instead of Hash
+  # SUBDATABASE ixd : wordId => list of (docId, nOccur)
   $self->{ixdDb} = $tie_db->(ixd => 'Hash');
 
-
-  # ixp : (int pair)      => data, namely:
-  #       (0, 0)          => (total nb of docs, average word count per doc)
-  #       (0, docId)      => nb of words in docId
-  #       (1, 0)          => if present, that db stores positions of words
-  #       (docId, wordId) => list of positions of word in doc -- only if $self->{positions}
+  # SUBDATABASE ixp : (int pair) => data, namely:
+  #    (0, 0)          => (total nb of docs, average word count per doc)
+  #    (0, docId)      => nb of words in docId
+  #    (1, 0)          => flag to store the value of $self->{positions}
+  #    (docId, wordId) => list of positions of word in doc -- only if $self->{positions}
   $self->{ixpDb} = $tie_db->(ixp => 'Btree');
 
 
@@ -106,7 +102,7 @@ sub new {
   if ($stopwords) {
     $self->{writeMode} or croak "must be in writeMode to specify stopwords";
 
-    # if scalar, treated as the name of the stopwords file => read it
+    # if scalar, this is treated as the name of the stopwords file => read it
     if (not ref $stopwords) { 
       my $fh;
       open $fh, "<", $stopwords or
@@ -124,15 +120,19 @@ sub new {
     }
   }
 
-  # on a fresh db, store an empty value under ixp(1, 0) to mark that we are using positions
   if ($is_fresh_db) {
     if ($self->{positions}) {
+      # store an empty value under ixp(1, 0) to mark that we are using positions
       $self->ixp(1, 0) = "";
     }
+
+    # number of words indexed in this database
+    $self->{ixw}{_NWORDS} = 0;
   }
 
-  # on a non-fresh db, must know if this DB uses word positions or not
+
   else {
+    # must know if this DB used word positions or not when it was created
     my $has_positions = defined $self->ixp(1, 0);
 
     croak "can't require 'positions => 1' after index creation time"
@@ -145,7 +145,7 @@ sub new {
 }
 
 
-sub ixp : lvalue {
+sub ixp : lvalue { # utility for reading or writing into {ixp}, with pairs of ints as keys
   my ($self, $v1, $v2) = @_;
   my $ixpKey = pack IXPKEYPACK, $v1, $v2;
   return $self->{ixp}{$ixpKey};
@@ -165,45 +165,52 @@ sub add {
   # extract words from the $_[0] buffer
   my %positions;
   my $word_position = 1;
+  my $nb_words_ini = my $nb_words_fin = $self->{ixw}{_NWORDS};
  WORD:
   while ($_[0] =~ /$self->{wregex}/g) {
     my $word = $self->{wfilter} ? $self->{wfilter}->($&) : $&
       or next WORD;
-    my $wordId = $self->{ixw}{$word}
-               || ($self->{ixw}{$word} = ++$self->{ixw}{_NWORDS}); # create new wordId
+    my $wordId = $self->{ixw}{$word} ||= ++$nb_words_fin;
     push @{$positions{$wordId}}, $word_position if $wordId > 0;
     $word_position += 1;
   }
+  $self->{ixw}{_NWORDS} = $nb_words_fin if $nb_words_fin > $nb_words_ini;
 
   # record nb of words in this document -- under pair (0, $docId) in ixp
   croak "docId $docId is already used" if defined $self->ixp(0, $docId);
   $self->ixp(0, $docId) = $word_position;
 
+  # open a cursor for more efficient write into ixd
+  my $c = $self->{ixdDb}->db_cursor;
+
   # insert words into the indices
   foreach my $wordId (keys %positions) { 
 
-    # insert this doc into the list for $wordId
-    my $n_occur = @{$positions{$wordId}};
-    # $self->{ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
-    $self->{TMP_ixd}{$wordId} .= pack(IXDPACK, $docId, $n_occur);
+    # insert this doc into the ixd list for $wordId
+    my $n_occur     = @{$positions{$wordId}};
+    my $to_be_added = pack(IXDPACK, $docId, $n_occur);
+    my ($k, $v) = ($wordId, undef);
+    my $status = $c->c_get($k, $v, DB_SET);
+    if ($status == 0) {
+      # this $wordId already has a list of docs. Let's append to that list
+      my $current_length = length($v);
+      $c->partial_set($current_length, length($to_be_added)); # next put() will be at end of string
+      $status = $c->c_put($k, $to_be_added, DB_CURRENT);
+      warn "add() : c_put error: $status\n" if $status > 0;
+      $c->partial_clear;
+    }
+    else {
+      # create a new entry for tis $wordId
+      $status = $self->{ixdDb}->db_put($k, $to_be_added);
+      warn "add() : db_put error: $status\n" if $status > 0;
+    }
 
-    # insert into the positions index
+    # insert the word positions into ixp
     if ($self->{positions}) {
-      $self->ixp($docId, $wordId) =  pack(IXPPACK, @{$positions{$wordId}});
+      $self->ixp($docId, $wordId) = pack(IXPPACK, @{$positions{$wordId}});
     }
   }
 }
-
-sub sync_TMP_ixd {
-  my $self = shift;
-  if ($self->{TMP_ixd}) {
-    while (my ($wordId, $lst_docs) = each %{$self->{TMP_ixd}}) {
-      $self->{ixd}{$wordId} .= $lst_docs;
-    }
-    delete $self->{TMP_ixd};
-  }
-}
-
 
 
 
@@ -216,7 +223,7 @@ sub remove {
   my $wordIds;
   if ($self->{positions}) { # if using word positions
     not defined $_[0] or carp "remove() : unexpected 'buf' argument";
-    $wordIds= $self->wordIds($docId);
+    $wordIds= $self->wordIds_in_doc($docId);
   }
   else {              # otherwise : recompute word ids
     defined $_[0] or carp "remove() : need a 'buf' argument";
@@ -225,10 +232,6 @@ sub remove {
                 uniq map {$self->{wfilter} ? $self->{wfilter}->($_) : $_}
                          ($_[0] =~ /$self->{wregex}/g)];
   }
-
-  # THINK : why did I write this "return" ? Looks wrong -- the final decrement should happen.
-  #
-  # return if not @$wordIds;
 
   # remove from the document index and positions index
   foreach my $wordId (@$wordIds) {
@@ -241,21 +244,23 @@ sub remove {
     }
   }
 
-  # TODO : remove nb of words from $self->{ixp}{0, $docid};
+  # remove nb of words from $self->{ixp}
+  my $k = pack IXPKEYPACK, 0, $docId;
+  delete $self->{ixp}{$k};
 }
 
-sub wordIds {
+sub wordIds_in_doc {
   my $self         = shift;
   my $target_docId = shift;
 
   $self->{positions}
     or croak "wordIds() not available (index was created with positions=>0)";
 
-  # position cursor at pair ($target_docId, 0)
+  # position cursor at pair ($target_docId, 1n)
   my @wordIds = ();
   my $c = $self->{ixpDb}->db_cursor;
   my ($k, $v);
-  $k = pack IXPKEYPACK, $target_docId, 0;
+  $k = pack IXPKEYPACK, $target_docId, 1;
   my $status = $c->c_get($k, $v, DB_SET_RANGE);
 
   # proceed sequentially through the pairs with same $target_docId
@@ -312,11 +317,6 @@ sub search {
   my $self = shift;
   my $query_string = shift;
   my $implicitPlus = shift;
-
-
-  # TMP HACK
-  $self->sync_TMP_ixd;
-
 
   # parse the query string
   $self->{qp} ||= new Search::QueryParser;
@@ -638,6 +638,7 @@ sub excerpts {
   }
   return $excerpts;
 }
+
 
 1;
 
