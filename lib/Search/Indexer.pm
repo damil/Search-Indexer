@@ -75,20 +75,26 @@ sub new {
   my $tie_db = sub {
     my ($db_subname, $db_kind) = @_;
     my $db_file = "$dir/$db_subname.bdb";
-    tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind",
-      -Filename => $db_file,
-      (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
-      ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ())
-	or croak "open $db_file : $! $^E $BerkeleyDB::Error";
+    my @args = (-Filename => $db_file,
+                (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
+                ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ()));
+
+    if ($db_kind eq 'Recno') {
+      tie @{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
+        or croak "open $db_file : $! $^E $BerkeleyDB::Error";
+    }
+    else {
+      tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
+        or croak "open $db_file : $! $^E $BerkeleyDB::Error";
+    }
   };
 
 
   # SUBDATABASE ixw : word => wordId (or -1 for stopwords)
   $self->{ixwDb} = $tie_db->(ixw => 'Btree');
 
-  # TODO  : try with Recno instead of Hash
   # SUBDATABASE ixd : wordId => list of (docId, nOccur)
-  $self->{ixdDb} = $tie_db->(ixd => 'Hash');
+  $self->{ixdDb} = $tie_db->(ixd => 'Recno');
 
   # SUBDATABASE ixp : (int pair) => data, namely:
   #    (0, 0)          => (total nb of docs, average word count per doc)
@@ -200,7 +206,7 @@ sub add {
       $c->partial_clear;
     }
     else {
-      # create a new entry for tis $wordId
+      # create a new entry for this $wordId
       $status = $self->{ixdDb}->db_put($k, $to_be_added);
       warn "add() : db_put error: $status\n" if $status > 0;
     }
@@ -235,9 +241,9 @@ sub remove {
 
   # remove from the document index and positions index
   foreach my $wordId (@$wordIds) {
-    my %docs = unpack IXDPACK_L, $self->{ixd}{$wordId};
+    my %docs = unpack IXDPACK_L, $self->{ixd}[$wordId];
     delete $docs{$docId};
-    $self->{ixd}{$wordId} = pack IXDPACK_L, %docs;
+    $self->{ixd}[$wordId] = pack IXDPACK_L, %docs;
     if ($self->{positions}) {
       my $k = pack IXPKEYPACK, $docId, $wordId;
       delete $self->{ixp}{$k};
@@ -307,7 +313,7 @@ sub dump {
       print "$word : STOPWORD\n";
     }
     else {
-      my %docs = unpack IXDPACK_L, $self->{ixd}{$wordId};
+      my %docs = unpack IXDPACK_L, $self->{ixd}[$wordId];
       print "$word : ", join (" ", keys %docs), "\n";
     }
   }
@@ -404,7 +410,7 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
   }
   else { # scalar value, match single word
     # retrieve a hash, initially of shape (docId => nb_of_occurrences_of_that_word)
-    my $scores = {unpack IXDPACK_L, ($self->{ixd}{$subQ->{value}} || "")};
+    my $scores = {unpack IXDPACK_L, ($self->{ixd}[$subQ->{value}] || "")};
     my @docIds = keys %$scores;
     my $n_docs_including_word = @docIds;
 
