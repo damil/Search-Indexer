@@ -12,22 +12,23 @@ use Text::Transliterator::Unaccent;
 
 our $VERSION = "0.77";
 
+#======================================================================
+# CONSTANTS AND GLOBAL VARS
+#======================================================================
+
 use constant unaccenter => Text::Transliterator::Unaccent->new(upper => 0);
 use constant {
 
-# max size of various ids
-  MAX_DOC_ID  => 0xFFFFFFFF, # unsigned long (32 bits)
-  MAX_POS_ID  => 0xFFFFFFFF, # position_id
-
-# encodings for pack/unpack
+  # encodings for pack/unpack
   IXDPACK     => 'ww',       # ixd values : pairs (compressed int, nb_occur)
   IXDPACK_L   => '(ww)*',    # list of above
   IXPPACK     => 'w*',       # word positions : list of compressed ints
   IXPKEYPACK  => 'ww',       # key for ixp : (docId, wordId)
+  GLOBSTATPACK=> 'wf',       # global stats : (total nb of docs, average nb of words)
 
   WRITECACHESIZE => (1 << 24), # arbitrary big value; seems good enough but may need tuning
 
-# default values for args to new()
+  # default values for args to new()
   DEFAULT     => {
     writeMode => 0,
     positions => 1,
@@ -39,12 +40,14 @@ use constant {
     },
     fieldname => '',
 
+    # default constants for generating excerpts
     ctxtNumChars => 35,
     maxExcerpts  => 5,
     preMatch     => "<b>",
     postMatch    => "</b>",
 
-    # constants for computing BM25 relevance. See https://fr.wikipedia.org/wiki/Okapi_BM25.
+    # default constants for computing BM25 relevance.
+    # See https://fr.wikipedia.org/wiki/Okapi_BM25.
     # ElasticSearch and Sqlite FTS5 use the same values
     bm25_k1      => 1.2,
     bm25_b       => 0.75,
@@ -52,8 +55,14 @@ use constant {
 };
 
 
+#======================================================================
+# CONSTRUCTOR
+#======================================================================
+
 sub new {
   my $class = shift;
+
+  # options can be supplied either as a hashref or a plain hash
   my $args = ref $_[0] eq 'HASH' ? $_[0] : {@_};
 
   # parse options
@@ -71,33 +80,31 @@ sub new {
   # remember if this is a fresh database
   my $is_fresh_db = ! -e "$dir/ixp.bdb";
 
-  # utility sub to connect to one of subdatabases
+  # utility sub to connect to one of the databases
   my $tie_db = sub {
-    my ($db_subname, $db_kind) = @_;
-    my $db_file = "$dir/$db_subname.bdb";
-    my @args = (-Filename => $db_file,
-                (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
-                ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ()));
+    my ($db_name, $db_kind) = @_;
+    my $db_file = "$dir/$db_name.bdb";
+    my @args = ( -Filename => $db_file,
+                 (-Flags => ($self->{writeMode} ? DB_CREATE : DB_RDONLY)),
+                 ($self->{writeMode} ? (-Cachesize => WRITECACHESIZE) : ()) );
 
-    $self->{$db_subname . 'Db'} =
-      $db_kind eq 'Recno' ? tie @{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
-                          : tie %{$self->{$db_subname}}, "BerkeleyDB::$db_kind", @args
+    # for example for 'ixw', store the DB handle under ->{ixwDb} and the tied hash under ->{ixw}
+    $self->{$db_name . 'Db'} =
+      $db_kind eq 'Recno' ? tie @{$self->{$db_name}}, "BerkeleyDB::$db_kind", @args
+                          : tie %{$self->{$db_name}}, "BerkeleyDB::$db_kind", @args
       or croak "open $db_file : $! $^E $BerkeleyDB::Error";
   };
 
-
-  # SUBDATABASE ixw : word => wordId (or -1 for stopwords)
-  $tie_db->(ixw => 'Btree');
-
-  # SUBDATABASE ixd : wordId => list of (docId, nOccur)
-  $tie_db->(ixd => 'Recno');
-
-  # SUBDATABASE ixp : (int pair) => data, namely:
+  # open the three databases
+  $tie_db->(ixw => 'Btree'); # of shape word   => wordId (or -1 for stopwords)
+  $tie_db->(ixd => 'Recno'); # of shape wordId => list of (docId, nOccur)
+  $tie_db->(ixp => 'Btree'); # of shape (packed pair of ints) => data, namely:
   #    (0, 0)          => (total nb of docs, average word count per doc)
   #    (0, docId)      => nb of words in docId
   #    (1, 0)          => flag to store the value of $self->{positions}
   #    (docId, wordId) => list of positions of word in doc -- only if $self->{positions}
-  $tie_db->(ixp => 'Btree');
+  # NOTE : the utility method $self->(x, y) can be used to read/write with pairs of ints
+
 
   # an optional list of stopwords may be given as a list or as a filename
   if ($stopwords) {
@@ -115,7 +122,7 @@ sub new {
       $stopwords = [$buf =~ /$self->{wregex}/g];
     }
 
-    # store stopwords in ixw with wordId=-1
+    # store stopwords in ixw, marked with wordId value = -1
     foreach my $word (@$stopwords) {
       $self->{ixw}{$word} = -1;
     }
@@ -123,22 +130,19 @@ sub new {
 
   if ($is_fresh_db) {
     if ($self->{positions}) {
-      # store an empty value under ixp(1, 0) to mark that we are using positions
-      $self->ixp(1, 0) = "";
+      # mark under ixp(1, 0) that we are using positions
+      $self->ixp(1, 0) = 1;
     }
-
-    # number of words indexed in this database
-    $self->{ixw}{_NWORDS} = 0;
   }
-
 
   else {
     # must know if this DB used word positions or not when it was created
-    my $has_positions = defined $self->ixp(1, 0);
+    my $has_positions = $self->ixp(1, 0);
 
     croak "can't require 'positions => 1' after index creation time"
       if $self->{writeMode} && $self->{positions} && !$has_positions;
 
+    # flag $self->{positions} indicates what was found in the DB
     $self->{positions} = $has_positions;
   }
 
@@ -146,36 +150,34 @@ sub new {
 }
 
 
-sub ixp : lvalue { # utility for reading or writing into {ixp}, with pairs of ints as keys
-  my ($self, $v1, $v2) = @_;
-  my $ixpKey = pack IXPKEYPACK, $v1, $v2;
-  return $self->{ixp}{$ixpKey};
-}
-
+#======================================================================
+# BUILDING THE INDEX
+#======================================================================
 
 
 sub add {
   my $self = shift;
   my $docId = shift;
-  # my $buf = shift; # using $_[0] instead for efficiency reasons
+  # my $buf = shift; # using $_[0] instead for avoiding a copy
 
-  # check that this is a valid docId
-  croak "docId $docId is too large"
-    if $docId > MAX_DOC_ID;
-
-  # extract words from the $_[0] buffer
   my %positions;
   my $word_position = 1;
-  my $nb_words_ini = my $nb_words_fin = $self->{ixw}{_NWORDS};
+  my $next_wordId   = $self->{ixdDb}->FETCHSIZE + 1;
+
+  # extract words from the $_[0] buffer
  WORD:
   while ($_[0] =~ /$self->{wregex}/g) {
     my $word = $self->{wfilter} ? $self->{wfilter}->($&) : $&
       or next WORD;
-    my $wordId = $self->{ixw}{$word} ||= ++$nb_words_fin;
+    # get the wordId for this word, or create a new one. If -1, this is a stopword
+    my $wordId = $self->{ixw}{$word} ||= $next_wordId++;
+
+    # if it's not a stopword, record the position of this word
     push @{$positions{$wordId}}, $word_position if $wordId > 0;
+
+    # increment the position, no matter if it's a stopword or not
     $word_position += 1;
   }
-  $self->{ixw}{_NWORDS} = $nb_words_fin if $nb_words_fin > $nb_words_ini;
 
   # record nb of words in this document -- under pair (0, $docId) in ixp
   croak "docId $docId is already used" if defined $self->ixp(0, $docId);
@@ -187,10 +189,12 @@ sub add {
   # insert words into the indices
   foreach my $wordId (keys %positions) { 
 
-    # insert this doc into the ixd list for $wordId
+    # prepare data for inserting this doc into the ixd list for $wordId
     my $n_occur     = @{$positions{$wordId}};
     my $to_be_added = pack(IXDPACK, $docId, $n_occur);
-    my ($k, $v) = ($wordId, undef);
+    my ($k, $v)     = ($wordId, undef);
+
+    # either update or insert
     my $status = $c->c_get($k, $v, DB_SET);
     if ($status == 0) {
       # this $wordId already has a list of docs. Let's append to that list
@@ -211,6 +215,9 @@ sub add {
       $self->ixp($docId, $wordId) = pack(IXPPACK, @{$positions{$wordId}});
     }
   }
+
+  # invalidate cache of global stats, because total and average have changed
+  $self->ixp(0, 0) = "";
 }
 
 
@@ -218,20 +225,26 @@ sub add {
 sub remove {
   my $self = shift;
   my $docId = shift;
-  # my $buf = shift; # using $_[0] instead for efficiency reasons
+  # my $buf = shift; # using $_[0] instead for avoiding a copy
 
   # retrieve or recompute the word ids
   my $wordIds;
-  if ($self->{positions}) { # if using word positions
+  if ($self->{positions}) {
+    # we can know the list of wordIds from the positions database
     not defined $_[0] or carp "remove() : unexpected 'buf' argument";
     $wordIds= $self->wordIds_in_doc($docId);
   }
-  else {              # otherwise : recompute word ids
-    defined $_[0] or carp "remove() : need a 'buf' argument";
-    $wordIds = [grep {defined $_ and $_ > 0} 
-                map {$self->{ixw}{$_}}
-                uniq map {$self->{wfilter} ? $self->{wfilter}->($_) : $_}
-                         ($_[0] =~ /$self->{wregex}/g)];
+  else {
+    # the only way to know the list of wordIds is to tokenize again the buffer
+    defined $_[0] or carp "->remove(\$docId, \$buf) : missing \$buf argument";
+    my %ids;
+  WORD:
+    while ($_[0] =~ /$self->{wregex}/g) {
+      my $word   = $self->{wfilter} ? $self->{wfilter}->($&) : $&  or next WORD;
+      my $wordId = $self->{ixw}{$word}                             or next WORD;
+      $ids{$wordId} +=1 if $wordId > 0;
+    }
+    $wordIds = [keys %ids];
   }
 
   # remove from the document index and positions index
@@ -248,73 +261,19 @@ sub remove {
   # remove nb of words from $self->{ixp}
   my $k = pack IXPKEYPACK, 0, $docId;
   delete $self->{ixp}{$k};
-}
 
-sub wordIds_in_doc {
-  my $self         = shift;
-  my $target_docId = shift;
-
-  $self->{positions}
-    or croak "wordIds() not available (index was created with positions=>0)";
-
-  # position cursor at pair ($target_docId, 1n)
-  my @wordIds = ();
-  my $c = $self->{ixpDb}->db_cursor;
-  my ($k, $v);
-  $k = pack IXPKEYPACK, $target_docId, 1;
-  my $status = $c->c_get($k, $v, DB_SET_RANGE);
-
-  # proceed sequentially through the pairs with same $target_docId
-  while ($status == 0) {
-    my ($docId, $wordId) = unpack IXPKEYPACK, $k;
-    last if $docId != $target_docId;
-    push @wordIds, $wordId;
-    $status = $c->c_get($k, $v, DB_NEXT);
-  }
-
-  return \@wordIds;
+  # invalidate cache of global stats, because total and average have changed
+  $self->ixp(0, 0) = "";
 }
 
 
 
-sub words {
-  my $self = shift;
-  my $prefix = shift;
+#======================================================================
+# SEARCH THE INDEX
+#======================================================================
 
-  my $regex = qr/^$prefix/;
-  my @words = ();
 
-  # position cursor at the first word starting with the $prefix
-  my $c = $self->{ixwDb}->db_cursor;
-  my ($k, $v);
-  $k = $prefix;
-  my $status = $c->c_get($k, $v, DB_SET_RANGE);
-
-  # proceed sequentially through the words with same $prefix
-  while ($status == 0) {
-    last if $k !~ $regex;
-    push @words, $k;
-    $status = $c->c_get($k, $v, DB_NEXT);
-  }
-
-  return \@words;
-}
-
-sub dump {
-  my $self = shift;
-  foreach my $word (sort keys %{$self->{ixw}}) {
-    my $wordId = $self->{ixw}{$word};
-    if ($wordId == -1) {
-      print "$word : STOPWORD\n";
-    }
-    else {
-      my %docs = unpack IXDPACK_L, $self->{ixd}[$wordId];
-      print "$word : ", join (" ", keys %docs), "\n";
-    }
-  }
-}
-
-sub search {
+sub search { # front-end entry point
   my $self = shift;
   my $query_string = shift;
   my $implicitPlus = shift;
@@ -335,7 +294,7 @@ sub search {
 	   regex       => qr/$strRegex/i,        };
 }
 
-sub _search {
+sub _search { # backend
   my ($self, $q) = @_;
 
   my $scores = undef;		# hash {doc1 => score1, doc2 => score2 ...}
@@ -395,24 +354,31 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
   # recursive call to _search if $subQ is a parenthesized query
   return $self->_search($subQ->{value}) if $subQ->{op} eq '()';
 
-  # otherwise, don't care about $subQ->{op} (assert $subQ->{op} eq ':')
+  # check op
+  $subQ->{op} eq ':' or croak "unexpected op in subquery: '$subQ->{op}'";
 
-  if (ref $subQ->{value}) { # several words, this is an "exact phrase"
+  # 3 subcases, depending on $subq->{value}
+  if (ref $subQ->{value}) {
+    # subcase 1 : "exact phrase"
     return $self->matchExactPhrase($subQ);
   }
-  elsif ($subQ->{value} <= -1) {# this is a stopword
+  elsif ($subQ->{value} <= -1) {
+    # subcase 2 : stopword
     return undef;
   }
-  else { # scalar value, match single word
+  else {
+    # subcase 3 : single word
+
     # retrieve a hash, initially of shape (docId => nb_of_occurrences_of_that_word)
-    my $scores = {unpack IXDPACK_L, ($self->{ixd}[$subQ->{value}] || "")};
+    my $wordId = $subQ->{value};
+    my $scores = { unpack IXDPACK_L, ($self->{ixd}[$wordId] || "") };
     my @docIds = keys %$scores;
     my $n_docs_including_word = @docIds;
 
     # compute the bm25 relevancy score for each doc -- see https://en.wikipedia.org/wiki/Okapi_BM25
-    # results are stored in same hash (overwrite the nb of occurrences)
+    # results are stored in %$scores (overwrite the nb of occurrences)
     if ($n_docs_including_word) {
-      my ($n_total_docs, $average_doc_length) = $self->global_doc_stats;
+      my ($n_total_docs, $average_doc_length) = $self->nb_docs_and_avg_length;
 
       my $inverse_doc_freq = log(($n_total_docs - $n_docs_including_word + 0.5)
                                  /
@@ -436,36 +402,6 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
 
 
 
-sub global_doc_stats {
-  my ($self) = @_;
-
-  # TODO : this should be cached until next add()
-
-  my $n_docs      = 0;
-  my $n_tot_words = 0;
-
-  # start a cursor at pair (0, 0)
-  my $c = $self->{ixpDb}->db_cursor;
-  my ($k, $v);
-  $k = pack IXPKEYPACK, 0, 0;
-  my $status = $c->c_get($k, $v, DB_SET_RANGE);
-
-  # proceed sequentially through the pairs of shape (0, n)
-  while ($status == 0) {
-    my ($RESERVED, $docId) = unpack IXPKEYPACK, $k;
-    last if $RESERVED != 0;
-    $n_docs      += 1;
-    $n_tot_words += $v;
-    $status = $c->c_get($k, $v, DB_NEXT);
-  }
-
-  my $avg = $n_docs ? $n_tot_words / $n_docs : 0;
-
-  return ($n_docs, $avg);
-}
-
-
-
 sub matchExactPhrase {
   my ($self, $subQ) = @_;
 
@@ -480,40 +416,44 @@ sub matchExactPhrase {
   # otherwise, intersect word position sets
   my %pos;
   my $wordDelta = 0;
-  my $scores = undef;
+  my $combined_scores = undef;
   foreach my $wordId (@{$subQ->{value}}) {
-    my $sc = $self->docsAndScores({op=>':', value=>$wordId});
-    if (not $scores) {          # no previous result set
-      if ($sc) {
-        $scores = $sc;
-        foreach my $docId (keys %$scores) {
+    my $current_scores = $self->docsAndScores({op => ':', value => $wordId});
+    if (not $combined_scores) {
+      if ($current_scores) {
+        $combined_scores = $current_scores;
+        foreach my $docId (keys %$combined_scores) {
           $pos{$docId} = [unpack IXPPACK, $self->ixp($docId, $wordId)];
         }
       }
     }
-    else {                    # combine with previous result set
+    else {
+      # must combine with previous scores
       $wordDelta++;
-      foreach my $docId (keys %$scores) {
-        if ($sc) { # if we have info about current word (is not a stopword)
-          if (not defined $sc->{$docId}) { # current word not in current doc
-            delete $scores->{$docId};
+      foreach my $docId (keys %$combined_scores) {
+        if ($current_scores) { # if $wordId is not a stopword ..
+          if (not defined $current_scores->{$docId}) { # if $docId does not contain $wordId ..
+            delete $combined_scores->{$docId};
           }
-          else { # current word found in current doc, check if positions match
+          else {
+            # check if positions of $wordId in $docId are close enough to positions of the
+            # previous word
             my @newPos   = unpack IXPPACK, $self->ixp($docId, $wordId);
             $pos{$docId} = nearPositions($pos{$docId}, \@newPos, $wordDelta);
             if ($pos{$docId}) {
-              $scores->{$docId} += $sc->{$docId};
+              # positions are close enough, so keep this docId and sum the scores
+              $combined_scores->{$docId} += $current_scores->{$docId};
             }
             else {
-              delete $scores->{$docId};
+              delete $combined_scores->{$docId};
             }
           }
         }
-      }  # end foreach my $docId (keys %$scores)
+      }  # end foreach my $docId (keys %$combined_scores)
     }
   } # end foreach my $wordId (@{$subQ->{value}})
 
-  return $scores;
+  return $combined_scores;
 }
 
 sub nearPositions {
@@ -570,26 +510,27 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
           my $regex2 = $self->{wfilter} ? join "\\P{Word}+", map quotemeta,
                                                map {$self->{wfilter}->($_)} @words
                                         : undef;
-          foreach my $regex (grep {$_} $regex1, $regex2) {
+          for my $regex (grep {$_} $regex1, $regex2) {
             $regex = "\\b$regex" if $regex =~ /^\p{Word}/;
             $regex = "$regex\\b" if $regex =~ /\p{Word}$/;
           }
-  	push @wordsRegexes, $regex1;
-  	push @wordsRegexes, $regex2 unless $regex1 eq $regex2;
 
-  	# now translate into word ids
-  	foreach my $word (@words) {
-  	  my $wf = $self->{wfilter} ? $self->{wfilter}->($word) : $word;
-  	  my $wordId = $wf ? ($self->{ixw}{$wf} || 0) : -1;
-  	  $killedWords{$word} = 1 if $wordId < 0;
-  	  $word = $wordId;
-  	}
+          push @wordsRegexes, $regex1;
+          push @wordsRegexes, $regex2 unless $regex1 eq $regex2;
 
-  	$val = (@words>1) ? \@words :    # several words : return an array
-  	       (@words>0) ? $words[0] :  # just one word : return its id
-               0;                        # no word : return 0 (means "no info")
+          # now translate into word ids
+          foreach my $word (@words) {
+            my $wf = $self->{wfilter} ? $self->{wfilter}->($word) : $word;
+            my $wordId = $wf ? ($self->{ixw}{$wf} || 0) : -1;
+            $killedWords{$word} = 1 if $wordId < 0;
+            $word = $wordId;
+          }
 
-  	$clone = {op => ':', value=> $val};
+          $val = (@words>1) ? \@words   : # several words : return an array
+                 (@words>0) ? $words[0] : # just one word : return its id
+                 0;                       # no word : return 0 (means "no info")
+
+          $clone = {op => ':', value=> $val};
         }
 
         push @{$result->{$k}}, $clone if $clone;
@@ -641,6 +582,130 @@ sub excerpts {
 }
 
 
+
+#======================================================================
+# OTHER PUBLIC METHODS
+#======================================================================
+
+sub indexed_words_for_prefix {
+  my $self = shift;
+  my $prefix = shift;
+
+  my $regex = qr/^$prefix/;
+  my @words = ();
+
+  # position cursor at the first word starting with the $prefix
+  my $c = $self->{ixwDb}->db_cursor;
+  my ($k, $v);
+  $k = $prefix;
+  my $status = $c->c_get($k, $v, DB_SET_RANGE);
+
+  # proceed sequentially through the words with same $prefix
+  while ($status == 0) {
+    last if $k !~ $regex;
+    push @words, $k;
+    $status = $c->c_get($k, $v, DB_NEXT);
+  }
+
+  return \@words;
+}
+
+sub dump {
+  my $self = shift;
+  foreach my $word (sort keys %{$self->{ixw}}) {
+    my $wordId = $self->{ixw}{$word};
+    if ($wordId == -1) {
+      print "$word : STOPWORD\n";
+    }
+    else {
+      my %docs = unpack IXDPACK_L, $self->{ixd}[$wordId];
+      print "$word : ", join (" ", keys %docs), "\n";
+    }
+  }
+}
+
+
+
+
+#======================================================================
+# INTERNAL UTILITY METHODS
+#======================================================================
+
+
+
+sub ixp : lvalue { # utility for reading or writing into {ixp}, with pairs of ints as keys
+  my ($self, $v1, $v2) = @_;
+  my $ixpKey = pack IXPKEYPACK, $v1, $v2;
+  return $self->{ixp}{$ixpKey};
+}
+
+
+sub wordIds_in_doc {
+  my $self         = shift;
+  my $target_docId = shift;
+
+  $self->{positions}
+    or croak "wordIds() not available (index was created with positions=>0)";
+
+  # position cursor at pair ($target_docId, 1n)
+  my @wordIds = ();
+  my $c = $self->{ixpDb}->db_cursor;
+  my ($k, $v);
+  $k = pack IXPKEYPACK, $target_docId, 1;
+  my $status = $c->c_get($k, $v, DB_SET_RANGE);
+
+  # proceed sequentially through the pairs with same $target_docId
+  while ($status == 0) {
+    my ($docId, $wordId) = unpack IXPKEYPACK, $k;
+    last if $docId != $target_docId;
+    push @wordIds, $wordId;
+    $status = $c->c_get($k, $v, DB_NEXT);
+  }
+
+  return \@wordIds;
+}
+
+sub nb_docs_and_avg_length {
+  my ($self) = @_;
+
+  # return cached data if it is present
+  if (my $data = $self->ixp(0, 0)) {
+    return unpack GLOBSTATPACK, $data;
+  }
+
+  # before computing the stats, check that we will be able to write the results
+  $self->{writeMode} or croak "DATA INCOHERENCE: missing global stats in this readonly database";
+
+  # counters
+  my $n_docs      = 0;
+  my $n_tot_words = 0;
+
+  # start a cursor at pair (0, 1)
+  my $c = $self->{ixpDb}->db_cursor;
+  my ($k, $v);
+  $k = pack IXPKEYPACK, 0, 1;
+  my $status = $c->c_get($k, $v, DB_SET_RANGE);
+
+  # proceed sequentially through all pairs of shape (0, n)
+  while ($status == 0) {
+    my ($RESERVED, $docId) = unpack IXPKEYPACK, $k;
+    last if $RESERVED != 0;
+    $n_docs      += 1;
+    $n_tot_words += $v;
+    $status = $c->c_get($k, $v, DB_NEXT);
+  }
+
+  # average number of words per doc
+  my $avg = $n_docs ? $n_tot_words / $n_docs : 0;
+
+  # cache the results
+  $self->ixp(0, 0) = pack GLOBSTATPACK, $n_docs, $avg;
+
+  return ($n_docs, $avg);
+}
+
+
+
 1;
 
 
@@ -653,30 +718,33 @@ Search::Indexer - full-text indexer
 =head1 SYNOPSIS
 
   use Search::Indexer;
-  my $ix = new Search::Indexer(dir => $dir, writeMode => 1);
-  foreach my $docId (keys %docs) {
-    $ix->add($docId, $docs{$docId});
-  }
 
-  my $result = $ix->search('+word -excludedWord +"exact phrase"');
-  my @docIds = keys %{$result->{scores}};
+  # feed the index
+  my $ix = new Search::Indexer(dir => $dir, writeMode => 1);
+  while (my ($docId, $docContent) = get_next_document() ) {
+    $ix->add($docId, $docContent);
+  }
+  
+  # search in the index
+  my $result      = $ix->search('normal_word +mandatory_word -excludedWord "exact phrase"');
+  my $scores      = $result->{scores};
+  my @best_docs   = (sort {$scores->{$b} <=> $scores->{$a}} keys %scores)[0 .. $max];
   my $killedWords = join ", ", @{$result->{killedWords}};
   print scalar(@docIds), " documents found\n", ;
   print "words $killedWords were ignored during the search\n" if $killedWords;
-  foreach my $docId (@docIds) {
-    my $score = $result->{scores}{$docId};
+  foreach my $docId (@best_docs) {
     my $excerpts = join "\n", $ix->excerpts($docs{$docId}, $result->{regex});
-    print "DOCUMENT $docId, score $score:\n$excerpts\n\n";
+    print "DOCUMENT $docId (score $scores->{$docId}) :\n$excerpts\n\n";
   }
-
+  
   my $result2 = $ix->search('word1 AND (word2 OR word3) AND NOT word4');
-
+  
   $ix->remove($someDocId);
 
 =head1 DESCRIPTION
 
-This module provides support for indexing a collection of documents,
-for searching the collection, and displaying the sorted results, 
+This module builds a fulltext index for indexing a collection of documents.
+It provides support for searching the collection and displaying the sorted results,
 together with contextual excerpts of the original document.
 
 =head2 Documents
@@ -693,7 +761,7 @@ query parser.
 
 =head2 Search syntax
 
-Searching requests may include plain terms, "exact phrases", 
+Searching requests may include plain terms, "exact phrases",
 '+' or '-' prefixes, boolean operators and parentheses.
 See L<Search::QueryParser> for details.
 
@@ -704,7 +772,10 @@ words to wordIds; b) a mapping from wordIds to lists of documents ; c)
 a mapping from pairs (docId, wordId) to lists of positions within the
 document. This third file holds detailed information and therefore is
 quite big ; but it allows us to quickly retrieve "exact phrases"
-(sequences of adjacent words) in the document.
+(sequences of adjacent words) in the document. Optionally, the positional
+information can be omitted : this results in smaller index files, but
+less precision in searches ("exact phrases" will be downgraded to an approximate
+search).
 
 =head2 Indexing steps
 
@@ -736,75 +807,68 @@ occur in the document.
 
 =back
 
-=head2 Limits
-
-All ids are stored as unsigned 32-bit integers; therefore there is 
-a limit of 4294967295 to the number of documents or to the number of 
-different words.
-
 =head2 Related modules
 
 A short comparison with other CPAN indexing modules is
 given in the L</"SEE ALSO"> section.
 
-This module depends on L<Search::QueryParser> for analyzing requests and 
+This module depends on L<Search::QueryParser> for analyzing requests and
 on L<BerkeleyDB> for storing the indexes.
 
-This module was designed together with L<File::Tabular>.
+This module was originally designed together with L<File::Tabular>; however
+it can be used independently. In particular, it is used in the L<Pod::POM::Web>
+application for indexing all local Perl modules and documentation.
 
 =head1 METHODS
 
-=over
+=head2 Constructor
 
-=item C<new(arg1 =E<gt> expr1, ...)>
+=head3 C<< new(arg1 => expr1, ...) >>
 
-Creates an indexer (either for a new index, or for
+Instantiates an indexer (either for a new index, or for
 accessing an existing index). Parameters are :
 
 =over
 
 =item dir
 
-Directory for index files. and possibly for the stopwords file. 
-Default is current directory
+Directory for index files and possibly for the stopwords file.
+Default is current directory. 
 
 =item writeMode
 
-Give a true value if you intend to write into the index.
+Flag which must be set to true if the application intends to write into the index.
 
 =item wregex 
 
-Regex for matching a word (C<qr/\p{Word}+/> by default).
-Will affect both L<add> and L<search> method.
-This regex should not contain any capturing parentheses
+Regex for matching a word (C<< qr/\p{Word}+/ >> by default).
+Used both for L<add> and L<search> method.
+The regex should not contain any capturing parentheses
 (use non-capturing parentheses C<< (?: ... ) >> instead).
 
 =item wfilter
 
-Ref to a callback sub that may normalize or eliminate a word.  Will
-affect both L<add> and L<search> method.  The default wfilter
-translates words in lower case and translates latin1 (iso-8859-1)
-accented characters into plain characters.
+Ref to a callback sub that may normalize or eliminate a word.  The
+default wfilter performs case folding and translates accented characters
+into their non-accented form.
 
 =item stopwords
 
 List of words that will be marked into the index as "words to exclude".
-This should usually occur when creating a new index ; but nothing prevents
-you to add other stopwords later. Since stopwords are stored in the
-index, they need not be specified when opening an index for searches or 
-updates.
+Stopwords are stored in the index, so they need not be supplied again
+when opening an index for searches or updates.
 
-The list may be supplied either as a ref to an array of scalars, or 
+The list may be supplied either as a ref to an array of scalars, or
 as a the name of a file containing the stopwords (full pathname
 or filename relative to I<dir>).
 
 
 =item fieldname
 
-Will only affect the L<search> method.
+This paramete will only affect the L<search> method.
 Search queries are passed to a general parser
-(see L<Search::QueryParser>). 
-Then, before being applied to the present indexer module, 
+(see L<Search::QueryParser>).
+Then, before being applied to the present indexer module,
 queries are pruned of irrelevant items.
 Query items are considered relevant if they have no
 associated field name, or if the associated field name is
@@ -813,7 +877,7 @@ equal to this C<fieldname>.
 =back
 
 Below are some additional parameters that only affect the
-L</excerpts> method.
+L</excerpts> method :
 
 =over
 
@@ -834,12 +898,12 @@ Default is 5.
 =item preMatch
 
 String to insert in contextual excerpts before a matched word.
-Default is C<"E<lt>bE<gt>">.
+Default is C<< "E<lt>bE<gt>" >>.
 
 =item postMatch
 
 String to insert in contextual excerpts after a matched word.
-Default is C<"E<lt>/bE<gt>">.
+Default is C<< "E<lt>/bE<gt>" >>.
 
 
 =item positions
@@ -851,69 +915,60 @@ Default is C<"E<lt>/bE<gt>">.
 Truth value to tell whether or not, when creating a new index,
 word positions should be stored. The default is true.
 
-If you turn it off, index files will be much smaller, indexing
-will be faster, but results will be less precise, 
-because the indexer can no longer find "exact phrases". 
+If you turn it off, index files will be smaller, indexing
+will be faster, but results will be less precise,
+because the indexer can no longer find "exact phrases".
 So if you type  C<"quick fox jumped">, the query will be 
 translated into C<quick AND fox AND jumped>, and therefore
-will retrieve documents in which those three words are present, but
-not necessarily in order.
-
-Another consequence of C<< positions => 0 >> is that
-there will be no automatic check of uniqueness of ids
-when adding documents into the index.
+will retrieve documents in which those three words are present,
+even if not in the required order or proximity.
 
 =back
 
-=item C<add(docId, buf)>
+
+=head2 Building the index
+
+
+=head3 C<add($docId, $buf)>
 
 Add a new document to the index.
-I<docId> is the unique identifier for this doc
-(the caller is responsible for uniqueness).
-I<buf> is a scalar containing the text representation of this doc.
+I<$docId> is the unique identifier for this doc
+(the caller is responsible for uniqueness). Doc ids need not be consecutive.
+I<$buf> is a scalar containing the text representation of this doc.
 
-=item C<remove(docId [, buf])>
+=head3 C<remove($docId [, $buf])>
 
 Removes a document from the index.
 If the index contains word positions (true by default), then
 only the C<docId> is needed; however, if the index was created
 without word positions, then the text representation
 of the document must be given as a scalar string in the second argument
-(of course this should be the same as the one that was supplied
+(of course this text should be the same as the one that was supplied
 when calling the L</add> method).
 
 
-=item C<wordIds(docId)>
+=head2 Searching the index
 
-Returns a ref to an array of word Ids contained in the specified document
-(not available if the index was created with C<< positions => 0 >>)
+=head3 C<search($queryString, [ $implicitPlus ])>
 
-=item C<words(prefix)>
-
-Returns a ref to an array of words found in the dictionary, 
-starting with prefix (i.e. C<< $ix->words("foo") >> will
-return "foo", "food", "fool", "footage", etc.).
-
-=item C<dump()>
-
-Debugging function, prints indexed words with list of associated docs.
-
-=item C<search(queryString, implicitPlus)>
-
-Searches the index.  See the L</SYNOPSIS> and L</DESCRIPTION> sections
-above for short descriptions of query strings, or
-L<Search::QueryParser> for details.  The second argument is optional ;
+Searches the index. The query string may be a simple word or a complex
+boolean expression, as described above in the  L</DESCRIPTION> section;
+precise technical details are documented in L<Search::QueryParser>.
+The second argument C<$implicitPlus> is optional ;
 if true, all words without any prefix will implicitly take prefix '+'
-(mandatory words).
+(all become mandatory words).
 
-The return value is a hash ref containing 
+The return value is a hash ref containing :
 
 =over
 
 =item scores
 
 hash ref, where keys are docIds of matching documents, and values are
-the corresponding computed scores.
+the corresponding relevancy scores, computed according to the
+L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> algorithm.
+Documents with the highest scores are the most relevant.
+
 
 =item killedWords
 
@@ -924,11 +979,12 @@ during the search (because they were filtered out or were stopwords)
 
 ref to a regular expression corresponding to all terms in the query
 string. This will be useful if you later want to get contextual
-excerpts from the found documents (see the L<excerpts> method).
+excerpts from the found documents (see the L</excerpts> method).
 
 =back
 
-=item C<excerpts(buf, regex)>
+
+=head3 C<excerpts(buf, regex)>
 
 Searches C<buf> for occurrences of C<regex>, 
 extracts the occurences together with some context
@@ -936,39 +992,19 @@ extracts the occurences together with some context
 and highlights the occurences. See parameters C<ctxtNumChars>,
 C<maxExcerpts>, C<preMatch>, C<postMatch> of the L</new> method.
 
-=back
 
-=head1 TO DO
+=head2 Other public methods
 
-=over
 
-=item *
+=head3 C<indexed_words_for_prefix($prefix)>
 
-Find a proper formula for combining scores from several terms.
-Current implementation is ridiculously simple-minded (just an addition).
-Also study the literature to improve the scoring formula.
+Returns a ref to an array of words found in the dictionary, 
+starting with the given prefix. For example, C<< $ix->indexed_words_for_prefix("foo") >> 
+will return "foo", "food", "fool", "footage", etc.
 
-=item *
+=head3 C<dump()>
 
-Handle concurrency through BerkeleyDB locks.
-
-=item *
-
-Maybe put all 3 index files as subDatabases in one single file.
-
-=item *
-
-Fine tuning of cachesize and other BerkeleyDB parameters.
-
-=item *
-
-Compare performances with other packages.
-
-=item *
-
-More functionalities : add NEAR operator and boost factors.
-
-=back
+Debugging function that prints indexed words with lists of associated docs.
 
 
 
