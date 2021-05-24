@@ -192,8 +192,14 @@ foreach my $s (keys %$tsts) {
   is_deeply(\%excerpts, $tsts->{$s}, $s);
 }
 
+
 my $words_sa = $i->words("sa");
 ok(eq_array($words_sa, [qw(sagen sails salda sans sante say)]),
    "words starting with 'sa'");
+
+$i->remove(1);
+my $r = $i->search("garrulous");
+ok (! keys %{$r->{scores}}, "doc deleted");
+
 
 done_testing();
