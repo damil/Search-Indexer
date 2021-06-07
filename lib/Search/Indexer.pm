@@ -1,5 +1,4 @@
 package Search::Indexer;
-use 5.16.0; # needed for CORE::fc
 use strict;
 use warnings;
 use Carp;
@@ -33,8 +32,8 @@ use constant {
     writeMode => 0,
     positions => 1,
     wregex    => qr/\p{Word}+/,
-    wfilter   => sub { # default filter : lowercase and no accents
-      my $word = CORE::fc($_[0]);
+    wfilter   => sub { # default filter : foldcase or lowercase and no accents
+      my $word = $] >= 5.016 ? CORE::fc($_[0]) : lc($_[0]);
       unaccenter->($word);
       return $word;
     },
@@ -47,7 +46,7 @@ use constant {
     postMatch    => "</b>",
 
     # default constants for computing BM25 relevance.
-    # See https://fr.wikipedia.org/wiki/Okapi_BM25.
+    # See https://en.wikipedia.org/wiki/Okapi_BM25.
     # ElasticSearch and Sqlite FTS5 use the same values
     bm25_k1      => 1.2,
     bm25_b       => 0.75,
@@ -743,9 +742,18 @@ Search::Indexer - full-text indexer
 
 =head1 DESCRIPTION
 
-This module builds a fulltext index for indexing a collection of documents.
-It provides support for searching the collection and displaying the sorted results,
-together with contextual excerpts of the original document.
+This module builds a fulltext index for indexing a collection of
+documents.  It provides support for searching through the collection and
+displaying the sorted results, together with contextual excerpts of
+the original documents.
+
+Unlike L<Search::Elasticsearch>, which is a client to an indexing
+server, here we have an I<embedded index>, running in the same process
+as your application.  Index data is stored in L<BerkeleyDB> databases,
+accessed through a C-code library, so indexing is fast; the storage
+format use
+L<perlpacktut/Another Portable Binary Encoding|compressed integers>,
+so it can accomodate large collections.
 
 =head2 Documents
 
@@ -770,12 +778,12 @@ See L<Search::QueryParser> for details.
 The indexer uses three files in BerkeleyDB format : a) a mapping from
 words to wordIds; b) a mapping from wordIds to lists of documents ; c)
 a mapping from pairs (docId, wordId) to lists of positions within the
-document. This third file holds detailed information and therefore is
-quite big ; but it allows us to quickly retrieve "exact phrases"
+document. This third file holds detailed information and therefore uses
+more disk space ; but it allows us to quickly retrieve "exact phrases"
 (sequences of adjacent words) in the document. Optionally, the positional
 information can be omitted : this results in smaller index files, but
-less precision in searches ("exact phrases" will be downgraded to an approximate
-search).
+less precision in searches (a query for "exact phrase" will be downgraded 
+to an approximate search).
 
 =head2 Indexing steps
 
@@ -809,15 +817,16 @@ occur in the document.
 
 =head2 Related modules
 
-A short comparison with other CPAN indexing modules is
-given in the L</"SEE ALSO"> section.
-
 This module depends on L<Search::QueryParser> for analyzing requests and
 on L<BerkeleyDB> for storing the indexes.
 
 This module was originally designed together with L<File::Tabular>; however
 it can be used independently. In particular, it is used in the L<Pod::POM::Web>
 application for indexing all local Perl modules and documentation.
+
+
+
+
 
 =head1 METHODS
 
@@ -833,7 +842,7 @@ accessing an existing index). Parameters are :
 =item dir
 
 Directory for index files and possibly for the stopwords file.
-Default is current directory. 
+Defaults to the current directory.
 
 =item writeMode
 
@@ -923,6 +932,18 @@ translated into C<quick AND fox AND jumped>, and therefore
 will retrieve documents in which those three words are present,
 even if not in the required order or proximity.
 
+=item bm25_k1
+
+Value of the I<k1> constant to be used when computing the
+L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> ranking
+function. Default is 1.2.
+
+=item bm25_b
+
+Value of the I<b> constant to be used when computing the
+L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> ranking
+function. Default is 0.75.
+
 =back
 
 
@@ -955,10 +976,10 @@ Searches the index. The query string may be a simple word or a complex
 boolean expression, as described above in the  L</DESCRIPTION> section;
 precise technical details are documented in L<Search::QueryParser>.
 The second argument C<$implicitPlus> is optional ;
-if true, all words without any prefix will implicitly take prefix '+'
+if true, all words without any prefix will implicitly take the prefix '+'
 (all become mandatory words).
 
-The return value is a hash ref containing :
+The return value is a hashref containing :
 
 =over
 
@@ -1007,23 +1028,20 @@ will return "foo", "food", "fool", "footage", etc.
 Debugging function that prints indexed words with lists of associated docs.
 
 
+=head1 AUTHOR
 
-=head1 SEE ALSO
+Laurent Dami, C<< <dami@cpan.org> >>
 
-L<Search::FreeText> is nice and compact, but
-limited in functionality (no +/- prefixes, no "exact phrase" search,
-no parentheses).
+=head1 LICENSE AND COPYRIGHT
 
-L<Plucene> is a Perl port of the Java I<Lucene> search engine.
-Plucene has probably every feature you will ever need, but requires
-quite an investment to install and learn (more than 60 classes,
-dependencies on lots of external modules). 
-I haven't done any benchmarks yet to compare performance.
+Copyright 2005, 2007, 2021 Laurent Dami.
 
-L<KinoSearch> is a more recent, more sophisticated search engine,
-which looks very powerful and should be probably faster and definitely
-more scalable than C<Search::Indexer>; but also with a less compact
-API. I haven't performed any detailed comparison yet.
+This program is free software; you can redistribute it and/or modify it
+under the terms of either: the GNU General Public License as published
+by the Free Software Foundation; or the Artistic License.
+
+See http://dev.perl.org/licenses/ for more information.
+
 
 =cut
 
