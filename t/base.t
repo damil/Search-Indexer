@@ -1,12 +1,14 @@
+use utf8;
 use strict;
 use warnings;
 use Test::More;
 
-#use locale;
-# (just for these tests, don't use locale so that the results are not
-#   platform-dependent). 
 
 BEGIN {use_ok("Search::Indexer");}
+
+#======================================================================
+# data to be indexed
+#======================================================================
 
 my $docs = {
 
@@ -84,8 +86,8 @@ my $docs = {
 #====================
 
   12 => qq{	Von Himmel hoch da komm ich her,
-		Ich bring' euch gute neue Mähr,
-		Der guten Mähr bring ich so viel,
+		Ich bring' euch gute neue MÃ¤hr,
+		Der guten MÃ¤hr bring ich so viel,
 		Davon ich sing'n und sagen will.                      },
  
   13 => qq{	Euch ist ein Kindlein heut' gebor'n 
@@ -95,27 +97,30 @@ my $docs = {
 
 #====================
 
-  14 => qq{	Oui, ce monde est bien plat; quant à l'autre, sornettes,
-		Moi, je vais, résigné, sans espoir, à mon sort
+  14 => qq{	Oui, ce monde est bien plat; quant Ã  l'autre, sornettes,
+		Moi, je vais, rÃ©signÃ©, sans espoir, Ã  mon sort
 		Et pour tuer le temps, en attendant la mort,
 		Je fume, au nez des Dieux, de fines cigarettes.       },
 
   15 => qq{	Allez, vivants, luttez, pauvres futurs squelettes !
-		Moi, le méandre bleu qui vers le ciel se tord
+		Moi, le mÃ©andre bleu qui vers le ciel se tord
 		Me plonge en une extase infinie et m'endort
 		Comme aux parfums mourants de mille cassolettes.      },
 
-  16 => qq{	Et j'entre au paradis, fleuri de rêves clairs,
-		Où viennent se mêler en valses fantastiques
-		Des éléphants en rut à des choeurs de moustiques      },
+  16 => qq{	Et j'entre au paradis, fleuri de rÃªves clairs,
+		OÃ¹ viennent se mÃªler en valses fantastiques
+		Des Ã©lÃ©phants en rut Ã  des choeurs de moustiques      },
 
-  17 => qq{	Et puis, quand je m'éveille en songeant à mes vers
+  17 => qq{	Et puis, quand je m'Ã©veille en songeant Ã  mes vers
 		Je contemple, le coeur plein d'une douce joie
-		Mon cher pouce rôti comme une cuisse d'oie.           }
+		Mon cher pouce rÃ´ti comme une cuisse d'oie.           }
 
 };
 
 
+#======================================================================
+# test queries and their expected results
+#======================================================================
 
 my $tsts = {
 
@@ -130,7 +135,7 @@ my $tsts = {
                  ...'                                                 ]},
 
 
- 'garrulous OR argosy' =>	# did you know those ?
+ 'garrulous OR argosy' =>	# OR -- by the way, did you know those words ?
  {'1' => ['...high tide,
                 Yet the <b>garrulous</b> waves of life
 		Shrink and divide
@@ -151,37 +156,37 @@ my $tsts = {
 		Ch\'io possa altr...'                                 ]},
 
 
- '(gute ODER guten) UND Mähr' => # boolean combination
+ '(gute ODER guten) UND MÃ¤hr' => # boolean combination
  {'12' => ['...da komm ich her,
-		Ich bring\' euch <b>gute</b> neue <b>Mähr</b>,
-		Der <b>guten</b> <b>Mähr</b> bring ich so viel,
+		Ich bring\' euch <b>gute</b> neue <b>MÃ¤hr</b>,
+		Der <b>guten</b> <b>MÃ¤hr</b> bring ich so viel,
 		Davon ich sin...'                                     ]},
 
 
  '+(je j moi) -mon' =>		# booleans through prefixes
- {'16' => ['...	Et <b>j</b>\'entre au paradis, fleuri de rêves ...'   ],
+ {'16' => ['...	Et <b>j</b>\'entre au paradis, fleuri de rÃªves ...'   ],
   '15' => ['...tez, pauvres futurs squelettes !
-		<b>Moi</b>, le méandre bleu qui vers le ciel ...'     ]}
+		<b>Moi</b>, le mÃ©andre bleu qui vers le ciel ...'     ]}
 
 };
 
 
-unlink foreach (<*.bdb>);	# remove previous index databases
+#======================================================================
+# testing code
+#======================================================================
 
-my $i = new Search::Indexer(	# create indexer
+# make sure we start with a fresh environment -- remove previous BerkeleyDB files
+unlink foreach (<*.bdb>);
 
-	  writeMode => 1,
+# create indexer with some example stopwords
+my $i = new Search::Indexer(writeMode => 1,
+                            stopwords => [qw(a i o or of it is and are my the)],
+                           );
 
-# just a couple of examples of stopwords
-	  stopwords => [qw(a i o or of it is and are my the)],
+# index all documents
+$i->add($_, $docs->{$_}) foreach (keys %$docs);
 
-# explicit setup of wregex : needed here to be sure to have the same
-# results on every platform (the default qr/\w+/ would be locale-dependent).
-          wregex => qr/[a-zçáàâäéèêëíìîïóòôöúùûüýÿ]+/i   );
-
-$i->add($_, $docs->{$_}) foreach (keys %$docs);	# index all docs
-
-
+# test the search() and excerpts() methods -- apply all queries frm %$tsts
 foreach my $s (keys %$tsts) {
   my $r = $i->search($s);
 
@@ -192,14 +197,15 @@ foreach my $s (keys %$tsts) {
   is_deeply(\%excerpts, $tsts->{$s}, $s);
 }
 
-
-my $words_sa = $i->words("sa");
+# test the indexed_words_for_prefix() method
+my $words_sa = $i->indexed_words_for_prefix("sa");
 ok(eq_array($words_sa, [qw(sagen sails salda sans sante say)]),
    "words starting with 'sa'");
 
+# remove a document
 $i->remove(1);
 my $r = $i->search("garrulous");
 ok (! keys %{$r->{scores}}, "doc deleted");
 
-
+# that's the end
 done_testing();
