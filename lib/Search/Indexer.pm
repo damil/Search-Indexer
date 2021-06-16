@@ -724,25 +724,30 @@ Search::Indexer - full-text indexer
     $ix->add($docId, $docContent);
   }
   
-  # search in the index
+  # search
   my $result      = $ix->search('normal_word +mandatory_word -excludedWord "exact phrase"');
   my $scores      = $result->{scores};
-  my @best_docs   = (sort {$scores->{$b} <=> $scores->{$a}} keys %scores)[0 .. $max];
+  my $n_docs      = keys %$scores;
+  my @best_docs   = (sort {$scores->{$b} <=> $scores->{$a}} keys %$scores)[0 .. $max];
   my $killedWords = join ", ", @{$result->{killedWords}};
-  print scalar(@docIds), " documents found\n", ;
+  
+  # show results
+  print "$n_docs documents found, displaying the first $max\n";
   print "words $killedWords were ignored during the search\n" if $killedWords;
   foreach my $docId (@best_docs) {
-    my $excerpts = join "\n", $ix->excerpts($docs{$docId}, $result->{regex});
+    my $excerpts = join "\n", $ix->excerpts(doc_content($docId), $result->{regex});
     print "DOCUMENT $docId (score $scores->{$docId}) :\n$excerpts\n\n";
   }
   
+  # boolean search
   my $result2 = $ix->search('word1 AND (word2 OR word3) AND NOT word4');
   
+  # removing a document
   $ix->remove($someDocId);
 
 =head1 DESCRIPTION
 
-This module builds a fulltext index for indexing a collection of
+This module builds a fulltext index for a collection of
 documents.  It provides support for searching through the collection and
 displaying the sorted results, together with contextual excerpts of
 the original documents.
@@ -760,12 +765,12 @@ so it can accomodate large collections.
 As far as this module is concerned, a I<document> is just a buffer of
 plain text, together with a unique identifying number. The caller is
 responsible for supplying unique numbers, and for converting the
-original source (HTML, PDF, whatever) into plain text. Documents could
-also contain more information (other fields like date, author, Dublin
-Core, etc.), but this must be handled externally, in a database or any
-other store. A candidate for storing metadata about documents
-could be L<File::Tabular|File::Tabular>, which uses the same
-query parser.
+original source (HTML, PDF, whatever) into plain text. Metadata
+about documents (fields like date, author, Dublin Core, etc.)
+must be handled externally, in a database or any
+other store. For collections of moderate size, a candidate
+for storing metadata could be L<File::Tabular|File::Tabular>, which
+uses the same query parser.
 
 =head2 Search syntax
 
@@ -780,10 +785,10 @@ words to wordIds; b) a mapping from wordIds to lists of documents ; c)
 a mapping from pairs (docId, wordId) to lists of positions within the
 document. This third file holds detailed information and therefore uses
 more disk space ; but it allows us to quickly retrieve "exact phrases"
-(sequences of adjacent words) in the document. Optionally, the positional
-information can be omitted : this results in smaller index files, but
-less precision in searches (a query for "exact phrase" will be downgraded 
-to an approximate search).
+(sequences of adjacent words) in the document. Optionally, this positional
+information can be omitted, yielding to smaller index files, but
+less precision in searches (a query for "exact phrase" will be downgraded
+to a search for all words in the phrase, even if not adjacent).
 
 =head2 Indexing steps
 
@@ -1044,15 +1049,3 @@ See http://dev.perl.org/licenses/ for more information.
 
 
 =cut
-
-
-
-
-
-
-
-
-
-
-
-
