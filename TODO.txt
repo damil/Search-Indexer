@@ -1,2 +1,0 @@
-- add method getNum (get a fresh document number)
-- keep list of removed nums (feed back to getNum)
