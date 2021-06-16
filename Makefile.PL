@@ -4,14 +4,21 @@ use ExtUtils::MakeMaker;
 # the contents of the Makefile that is written.
 WriteMakefile(
     NAME              => 'Search::Indexer',
-    VERSION_FROM      => 'lib/Search/Indexer.pm', # finds $VERSION
+    VERSION_FROM      => 'lib/Search/Indexer.pm',
     PREREQ_PM         => {'Search::QueryParser'            => '0.91',
 			  'BerkeleyDB'                     => '0.22',
                           'List::Util'                     => 0,
                           'List::MoreUtils'                => 0,
                           'Text::Transliterator::Unaccent' => 0,
                         },
-    ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
-      (ABSTRACT_FROM  => 'lib/Search/Indexer.pm', # retrieve abstract from module
-       AUTHOR         => 'Laurent Dami <laurent.dami AT etat ge ch>') : ()),
+    ABSTRACT_FROM  => 'lib/Search/Indexer.pm',
+    AUTHOR         => 'Laurent Dami <dami@cpan.org>',
+    META_MERGE => {
+      resources => {
+        homepage   => 'https://metacpan.org/author/DAMI',
+        license    => 'http://www.perlfoundation.org/artistic_license_2_0',
+        repository => 'https://github.com/damil/Search-Indexer.git',
+      },
+   },
+
 );
