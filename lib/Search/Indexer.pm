@@ -4,12 +4,12 @@ use warnings;
 use Carp;
 use BerkeleyDB;
 use Search::QueryParser;
-use List::Util                      qw/min/;
+use List::Util                      qw/min sum/;
 use List::MoreUtils                 qw/uniq/;
 use Text::Transliterator::Unaccent;
 
 
-our $VERSION = "0.77";
+our $VERSION = "1.00";
 
 #======================================================================
 # CONSTANTS AND GLOBAL VARS
@@ -23,7 +23,7 @@ use constant {
   IXDPACK_L   => '(ww)*',    # list of above
   IXPPACK     => 'w*',       # word positions : list of compressed ints
   IXPKEYPACK  => 'ww',       # key for ixp : (docId, wordId)
-  GLOBSTATPACK=> 'wf',       # global stats : (total nb of docs, average nb of words)
+  GLOBSTATPACK=> 'ww',       # global stats : (total nb of docs, total nb of words)
 
   WRITECACHESIZE => (1 << 24), # arbitrary big value; seems good enough but may need tuning
 
@@ -162,20 +162,28 @@ sub add {
   my %positions;
   my $word_position = 1;
   my $next_wordId   = $self->{ixdDb}->FETCHSIZE + 1;
+  my $nb_words      = 0;
 
   # extract words from the $_[0] buffer
  WORD:
   while ($_[0] =~ /$self->{wregex}/g) {
     my $word = $self->{wfilter} ? $self->{wfilter}->($&) : $&
       or next WORD;
+
     # get the wordId for this word, or create a new one. If -1, this is a stopword
     my $wordId = $self->{ixw}{$word} ||= $next_wordId++;
 
-    # if it's not a stopword, record the position of this word
-    push @{$positions{$wordId}}, $word_position if $wordId > 0;
+    if ($wordId > 0) { # if it's not a stopword ...
+      # record the position of this word
+      push @{$positions{$wordId}}, $word_position;
+
+      # increment the word counter
+      $nb_words      += 1;
+    }
 
     # increment the position, no matter if it's a stopword or not
     $word_position += 1;
+
   }
 
   # record nb of words in this document -- under pair (0, $docId) in ixp
@@ -215,8 +223,19 @@ sub add {
     }
   }
 
-  # invalidate cache of global stats, because total and average have changed
-  $self->ixp(0, 0) = "";
+  # take this new doc into account in the global stats
+  $self->update_global_stats(+1, +$nb_words);
+}
+
+
+sub update_global_stats {
+  my ($self, $delta_docs, $delta_words) = @_;
+
+  my $current_stats = $self->ixp(0, 0);
+  my ($nb_tot_docs, $nb_tot_words) = $current_stats ? unpack GLOBSTATPACK, $current_stats : (0,0);
+  $nb_tot_docs  += $delta_docs;
+  $nb_tot_words += $delta_words;
+  $self->ixp(0, 0) = pack GLOBSTATPACK, $nb_tot_docs, $nb_tot_words;
 }
 
 
@@ -227,27 +246,28 @@ sub remove {
   # my $buf = shift; # using $_[0] instead for avoiding a copy
 
   # retrieve or recompute the word ids
-  my $wordIds;
+  my $n_occur_per_word;
   if ($self->{positions}) {
     # we can know the list of wordIds from the positions database
     not defined $_[0] or carp "remove() : unexpected 'buf' argument";
-    $wordIds= $self->wordIds_in_doc($docId);
+    $n_occur_per_word = $self->wordIds_in_doc($docId);
   }
   else {
     # the only way to know the list of wordIds is to tokenize again the buffer
     defined $_[0] or carp "->remove(\$docId, \$buf) : missing \$buf argument";
-    my %ids;
+
   WORD:
     while ($_[0] =~ /$self->{wregex}/g) {
       my $word   = $self->{wfilter} ? $self->{wfilter}->($&) : $&  or next WORD;
       my $wordId = $self->{ixw}{$word}                             or next WORD;
-      $ids{$wordId} +=1 if $wordId > 0;
+      if ($wordId > 0) {
+        $n_occur_per_word->{$wordId} += 1;
+      }
     }
-    $wordIds = [keys %ids];
   }
 
   # remove from the document index and positions index
-  foreach my $wordId (@$wordIds) {
+  foreach my $wordId (keys %$n_occur_per_word) {
     my %docs = unpack IXDPACK_L, $self->{ixd}[$wordId];
     delete $docs{$docId};
     $self->{ixd}[$wordId] = pack IXDPACK_L, %docs;
@@ -261,8 +281,9 @@ sub remove {
   my $k = pack IXPKEYPACK, 0, $docId;
   delete $self->{ixp}{$k};
 
-  # invalidate cache of global stats, because total and average have changed
-  $self->ixp(0, 0) = "";
+  # adjust global stats
+  my $nb_words = sum values %$n_occur_per_word;
+  $self->update_global_stats(-1, -$nb_words);
 }
 
 
@@ -377,21 +398,21 @@ sub docsAndScores { # returns a hash {docId => score} or undef (no info)
     # compute the bm25 relevancy score for each doc -- see https://en.wikipedia.org/wiki/Okapi_BM25
     # results are stored in %$scores (overwrite the nb of occurrences)
     if ($n_docs_including_word) {
-      my ($n_total_docs, $average_doc_length) = $self->nb_docs_and_avg_length;
-
-      my $inverse_doc_freq = log(($n_total_docs - $n_docs_including_word + 0.5)
-                                 /
-                                 ($n_docs_including_word + 0.5));
+      my ($n_total_docs, $n_total_words) = unpack GLOBSTATPACK, $self->ixp(0, 0);
+      my $average_doc_length             = $n_total_docs ? $n_total_words / $n_total_docs : 0;
+      my $inverse_doc_freq               = log(($n_total_docs - $n_docs_including_word + 0.5)
+                                          /
+                                           ($n_docs_including_word + 0.5));
 
       foreach my $docId (@docIds) {
         my $freq_word_in_doc = $scores->{$docId};
         my $n_words_in_doc   = $self->ixp(0, $docId);
         my $n_words_ratio    = $n_words_in_doc / $average_doc_length;
-       $scores->{$docId} = $inverse_doc_freq
-                          * ( $freq_word_in_doc * ($self->{bm25_k1} + 1))
-                          / ($freq_word_in_doc + $self->{bm25_k1} *
-                                                (1 - $self->{bm25_b}
-                                                   + $self->{bm25_b} * $n_words_ratio));
+        $scores->{$docId}    = $inverse_doc_freq
+                              * ($freq_word_in_doc * ($self->{bm25_k1} + 1))
+                              / ($freq_word_in_doc + $self->{bm25_k1} *
+                                                     (1 - $self->{bm25_b}
+                                                        + $self->{bm25_b} * $n_words_ratio));
       }
     }
 
@@ -575,6 +596,7 @@ sub excerpts {
     last if @$excerpts >= $self->{maxExcerpts};
     my $x = substr($_[0], $match->[0], $match->[1] - $match->[0]); # extract
     $x =~ s/$regex/$self->{preMatch}$&$self->{postMatch}/g ;       # highlight
+    $x =~ s/\s+/ /g;                                               # remove multiple spaces
     push @$excerpts, "...$x...";
   }
   return $excerpts;
@@ -644,10 +666,10 @@ sub wordIds_in_doc {
   my $target_docId = shift;
 
   $self->{positions}
-    or croak "wordIds() not available (index was created with positions=>0)";
+    or croak "wordIds_in_doc() not available (index was created without positions)";
 
   # position cursor at pair ($target_docId, 1n)
-  my @wordIds = ();
+  my %n_occur_for_word;
   my $c = $self->{ixpDb}->db_cursor;
   my ($k, $v);
   $k = pack IXPKEYPACK, $target_docId, 1;
@@ -656,12 +678,14 @@ sub wordIds_in_doc {
   # proceed sequentially through the pairs with same $target_docId
   while ($status == 0) {
     my ($docId, $wordId) = unpack IXPKEYPACK, $k;
+    my @positions        = unpack IXPPACK, $v;
+
     last if $docId != $target_docId;
-    push @wordIds, $wordId;
+    $n_occur_for_word{$wordId} = scalar @positions;
     $status = $c->c_get($k, $v, DB_NEXT);
   }
 
-  return \@wordIds;
+  return \%n_occur_for_word;
 }
 
 sub nb_docs_and_avg_length {
@@ -698,11 +722,11 @@ sub nb_docs_and_avg_length {
   my $avg = $n_docs ? $n_tot_words / $n_docs : 0;
 
   # cache the results
-  $self->ixp(0, 0) = pack GLOBSTATPACK, $n_docs, $avg;
+  my $stats        = pack GLOBSTATPACK, $n_docs, $avg;
+  $self->ixp(0, 0) = $stats;
 
   return ($n_docs, $avg);
 }
-
 
 
 1;
@@ -789,6 +813,9 @@ more disk space ; but it allows us to quickly retrieve "exact phrases"
 information can be omitted, yielding to smaller index files, but
 less precision in searches (a query for "exact phrase" will be downgraded
 to a search for all words in the phrase, even if not adjacent).
+
+NOTE: the internal representation in v1.0 has slightly changed from previous
+versions; B<existing indexes are not compatible and must be rebuilt>.
 
 =head2 Indexing steps
 
