@@ -1,7 +1,6 @@
 use 5.008004;
 use ExtUtils::MakeMaker;
-# See lib/ExtUtils/MakeMaker.pm for details of how to influence
-# the contents of the Makefile that is written.
+
 WriteMakefile(
     NAME              => 'Search::Indexer',
     VERSION_FROM      => 'lib/Search/Indexer.pm',
@@ -11,6 +10,9 @@ WriteMakefile(
                           'List::MoreUtils'                => 0,
                           'Text::Transliterator::Unaccent' => 0,
                         },
+    TEST_REQUIRES     => { 'Test2::V0'                     => 0,
+                           'FindBin'                       => 0,
+                         },
     ABSTRACT_FROM  => 'lib/Search/Indexer.pm',
     AUTHOR         => 'Laurent Dami <dami@cpan.org>',
     META_MERGE => {

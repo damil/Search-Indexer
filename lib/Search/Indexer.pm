@@ -231,11 +231,11 @@ sub add {
 sub update_global_stats {
   my ($self, $delta_docs, $delta_words) = @_;
 
-  my $current_stats = $self->ixp(0, 0);
+  my $current_stats                = $self->ixp(0, 0);
   my ($nb_tot_docs, $nb_tot_words) = $current_stats ? unpack GLOBSTATPACK, $current_stats : (0,0);
-  $nb_tot_docs  += $delta_docs;
-  $nb_tot_words += $delta_words;
-  $self->ixp(0, 0) = pack GLOBSTATPACK, $nb_tot_docs, $nb_tot_words;
+  $nb_tot_docs                    += $delta_docs;
+  $nb_tot_words                   += $delta_words;
+  $self->ixp(0, 0)                 = pack GLOBSTATPACK, $nb_tot_docs, $nb_tot_words;
 }
 
 
@@ -687,47 +687,6 @@ sub wordIds_in_doc {
 
   return \%n_occur_for_word;
 }
-
-sub nb_docs_and_avg_length {
-  my ($self) = @_;
-
-  # return cached data if it is present
-  if (my $data = $self->ixp(0, 0)) {
-    return unpack GLOBSTATPACK, $data;
-  }
-
-  # before computing the stats, check that we will be able to write the results
-  $self->{writeMode} or croak "DATA INCOHERENCE: missing global stats in this readonly database";
-
-  # counters
-  my $n_docs      = 0;
-  my $n_tot_words = 0;
-
-  # start a cursor at pair (0, 1)
-  my $c = $self->{ixpDb}->db_cursor;
-  my ($k, $v);
-  $k = pack IXPKEYPACK, 0, 1;
-  my $status = $c->c_get($k, $v, DB_SET_RANGE);
-
-  # proceed sequentially through all pairs of shape (0, n)
-  while ($status == 0) {
-    my ($RESERVED, $docId) = unpack IXPKEYPACK, $k;
-    last if $RESERVED != 0;
-    $n_docs      += 1;
-    $n_tot_words += $v;
-    $status = $c->c_get($k, $v, DB_NEXT);
-  }
-
-  # average number of words per doc
-  my $avg = $n_docs ? $n_tot_words / $n_docs : 0;
-
-  # cache the results
-  my $stats        = pack GLOBSTATPACK, $n_docs, $avg;
-  $self->ixp(0, 0) = $stats;
-
-  return ($n_docs, $avg);
-}
-
 
 1;
 
