@@ -5,7 +5,7 @@ use Carp;
 use BerkeleyDB;
 use Search::QueryParser;
 use List::Util                      qw/min sum/;
-use List::MoreUtils                 qw/uniq/;
+use List::MoreUtils                 qw/all uniq/;
 use Text::Transliterator::Unaccent;
 
 
@@ -55,9 +55,10 @@ use constant {
 
 
 #======================================================================
-# CONSTRUCTOR
+# CLASS METHODS
 #======================================================================
 
+# constructor
 sub new {
   my $class = shift;
 
@@ -148,6 +149,11 @@ sub new {
   return $self;
 }
 
+
+sub has_index_in_dir {
+  my ($class, $dir) = @_;
+  return all {-f "$dir/$_.bdb"} qw/ixw ixd ixp/;
+}
 
 #======================================================================
 # BUILDING THE INDEX
@@ -821,7 +827,7 @@ application for indexing all local Perl modules and documentation.
 
 =head1 METHODS
 
-=head2 Constructor
+=head2 Class methods
 
 =head3 C<< new(arg1 => expr1, ...) >>
 
@@ -936,6 +942,11 @@ L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> ranking
 function. Default is 0.75.
 
 =back
+
+
+=head3 C<has_index_in_dir($dir)>
+
+Checks for presence of the three F<*.bdb> files in the given C<$dir>.
 
 
 =head2 Building the index
