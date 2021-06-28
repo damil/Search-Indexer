@@ -69,7 +69,7 @@ sub new {
   $self->{$_} = exists $args->{$_} ? delete $args->{$_} : DEFAULT->{$_} 
     foreach keys %{ DEFAULT() };
   my $dir = delete $args->{dir} || ".";
-  $dir =~ s{[/\\]$}{};		# remove trailing slash
+  $dir =~ s{[/\\]$}{};          # remove trailing slash
   my $stopwords = delete $args->{stopwords};
 
   # complain if we found invalid options
@@ -113,8 +113,8 @@ sub new {
     if (not ref $stopwords) { 
       my $fh;
       open $fh, "<", $stopwords or
-	open $fh, "<", "$dir/$stopwords" or
-	  croak "can't open stopwords file $stopwords : $^E ";
+        open $fh, "<", "$dir/$stopwords" or
+          croak "can't open stopwords file $stopwords : $^E ";
       local $/ = undef;
       my $buf = <$fh>;
       close $buf;
@@ -310,14 +310,14 @@ sub search { # front-end entry point
 
   # return structure
   return { scores      => $self->_search($translated_query),
-	   killedWords => [keys %$killedWords],
-	   regex       => qr/$strRegex/i,        };
+           killedWords => [keys %$killedWords],
+           regex       => qr/$strRegex/i,        };
 }
 
 sub _search { # backend
   my ($self, $q) = @_;
 
-  my $scores = undef;		# hash {doc1 => score1, doc2 => score2 ...}
+  my $scores = undef;           # hash {doc1 => score1, doc2 => score2 ...}
 
   # 1) deal with mandatory subqueries
 
@@ -347,10 +347,10 @@ sub _search { # backend
     # otherwise, combine with previous result set
     foreach my $docId (keys %$sc) {
       if (defined $scores->{$docId}) { # docId was already there, add new score
-	$scores->{$docId} += $sc->{$docId};
+        $scores->{$docId} += $sc->{$docId};
       }
       elsif ($noMandatorySubq){ # insert a new docId to the result set
-	$scores->{$docId} = $sc->{$docId};
+        $scores->{$docId} = $sc->{$docId};
       }
       # else do nothing (ignore this docId)
     }
@@ -516,8 +516,8 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
 
         my $clone = undef;
         if ($subQ->{op} eq '()') {
-  	$clone = { op => '()', 
-  		   value => $recursive_translate->($val), };
+        $clone = { op => '()', 
+                   value => $recursive_translate->($val), };
         }
         elsif ($subQ->{op} eq ':') {
           # split query according to our notion of "term"
