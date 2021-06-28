@@ -536,7 +536,7 @@ sub translateQuery { # replace words by ids, remove irrelevant subqueries
           }
 
           push @wordsRegexes, $regex1;
-          push @wordsRegexes, $regex2 unless $regex1 eq $regex2;
+          push @wordsRegexes, $regex2 if $regex2 && $regex2 ne $regex1;
 
           # now translate into word ids
           foreach my $word (@words) {
