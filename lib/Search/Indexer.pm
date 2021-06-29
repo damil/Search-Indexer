@@ -8,7 +8,6 @@ use List::Util                      qw/min sum/;
 use List::MoreUtils                 qw/all uniq/;
 use Text::Transliterator::Unaccent;
 
-
 our $VERSION = "1.00";
 
 #======================================================================
