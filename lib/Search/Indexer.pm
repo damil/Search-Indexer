@@ -869,7 +869,7 @@ or filename relative to I<dir>).
 
 =item fieldname
 
-This paramete will only affect the L<search> method.
+This parameter will only affect the L<search> method.
 Search queries are passed to a general parser
 (see L<Search::QueryParser>).
 Then, before being applied to the present indexer module,
