@@ -269,6 +269,8 @@ sub remove {
       }
     }
   }
+  
+  return unless %$n_occur_per_word; # no such docID exists/nothing to remove
 
   # remove from the document index and positions index
   foreach my $wordId (keys %$n_occur_per_word) {
