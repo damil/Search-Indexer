@@ -744,7 +744,7 @@ server, here we have an I<embedded index>, running in the same process
 as your application.  Index data is stored in L<BerkeleyDB> databases,
 accessed through a C-code library, so indexing is fast; the storage
 format use
-L<perlpacktut/Another Portable Binary Encoding|compressed integers>,
+L<compressed integers|perlpacktut/Another Portable Binary Encoding>,
 so it can accomodate large collections.
 
 =head2 Documents
@@ -930,13 +930,13 @@ even if not in the required order or proximity.
 =item bm25_k1
 
 Value of the I<k1> constant to be used when computing the
-L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> ranking
+L<Okapi BM25|https://fr.wikipedia.org/wiki/Okapi_BM25> ranking
 function. Default is 1.2.
 
 =item bm25_b
 
 Value of the I<b> constant to be used when computing the
-L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> ranking
+L<Okapi BM25|https://fr.wikipedia.org/wiki/Okapi_BM25> ranking
 function. Default is 0.75.
 
 =back
@@ -987,7 +987,7 @@ The return value is a hashref containing :
 
 hash ref, where keys are docIds of matching documents, and values are
 the corresponding relevancy scores, computed according to the
-L<https://fr.wikipedia.org/wiki/Okapi_BM25|Okapi BM25> algorithm.
+L<Okapi BM25|https://fr.wikipedia.org/wiki/Okapi_BM25> algorithm.
 Documents with the highest scores are the most relevant.
 
 
